@@ -50,6 +50,10 @@ func (t *Timer) Wait() (data *Image, isLastFrame bool) {
 }
 
 func (t *Timer) Stop() {
-	t.audioPlayer.Close()
-	t.videoLoader.Close()
+	if t.audioPlayer != nil {
+		t.audioPlayer.Close()
+	}
+	if t.videoLoader != nil {
+		t.videoLoader.Close()
+	}
 }

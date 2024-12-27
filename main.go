@@ -71,7 +71,9 @@ func onExit() {
 	exitAlternateBuffer()
 	showCursor()
 
-	timer.Stop()
+	if timer != nil {
+		timer.Stop()
+	}
 
 	// Close the logger if it's a file
 	switch logger.Writer().(type) {
