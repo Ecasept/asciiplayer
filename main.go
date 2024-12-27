@@ -35,11 +35,12 @@ var CHARS []rune
 
 // Command Line Argument
 var (
-	ratio       uint
-	allowResize bool
-	userWidth   uint
-	userHeight  uint
-	userFPS     uint
+	ratio        uint
+	allowResize  bool
+	userWidth    uint
+	userHeight   uint
+	userFPS      uint
+	colorEnabled bool
 )
 
 // Contains the current terminal size
@@ -101,9 +102,10 @@ func parseArgs() string {
 	flag.UintVar(&userWidth, "w", 0, "Width of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
 	flag.UintVar(&userHeight, "h", 0, "Height of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
 	flag.UintVar(&userFPS, "fps", 0, "Specify the frames per second of the video. Defaults to the video's fps.")
-	flag.StringVar(&userChars, "ch", "ascii", "Character set - Defaults to \"ascii\", options are: \"ascii\", \"ascii_no_space\" and \"block\"")
+	flag.StringVar(&userChars, "ch", "ascii", "Character set - Defaults to \"ascii\", options are: \"ascii\", \"ascii_no_space\", \"block\" and \"filled\"")
 	flag.BoolVar(&showHelp, "help", false, "Show help")
 	flag.BoolVar(&enableLogger, "log", false, "Enable logger for debugging")
+	flag.BoolVar(&colorEnabled, "c", false, "Enable color output")
 	flag.Parse()
 
 	filename := flag.Arg(0)
@@ -134,6 +136,8 @@ func parseArgs() string {
 		CHARS = CHARS_ASCII_NO_SPACE
 	case "block":
 		CHARS = CHARS_BLOCK
+	case "filled":
+		CHARS = []rune{'█'}
 	default:
 		raiseErr(errors.New("Unknown character set " + userChars))
 	}

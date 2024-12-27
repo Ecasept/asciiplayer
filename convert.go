@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"math"
 
@@ -30,6 +31,14 @@ func toBrightness(r, g, b uint32, a float64) float64 {
 	return float64(r+g+b) / 3 * a
 }
 
+func ANSICol(bg bool, r, g, b int) string {
+	if bg {
+		return fmt.Sprintf("\033[48;2;%03v;%03v;%03vm", r, g, b)
+	} else {
+		return fmt.Sprintf("\033[38;2;%03v;%03v;%03vm", r, g, b)
+	}
+}
+
 func convertImage(img *image.RGBA) *Image {
 	needsClear := false
 	if !termData.defined || allowResize {
@@ -42,15 +51,29 @@ func convertImage(img *image.RGBA) *Image {
 
 	resizedImg := resize.Thumbnail(maxWidth, maxHeight, img, resize.NearestNeighbor)
 
-	imgWidth := resizedImg.Bounds().Dx()
-	imgHeight := resizedImg.Bounds().Dy()
+	var asciiData []rune
+
+	if colorEnabled {
+		asciiData = imgToASCIIColor(&resizedImg)
+	} else {
+		asciiData = imgToASCII(&resizedImg)
+	}
+
+	return &Image{
+		data:       asciiData,
+		needsClear: needsClear,
+	}
+}
+
+func imgToASCII(img *image.Image) []rune {
+	imgWidth, imgHeight := (*img).Bounds().Dx(), (*img).Bounds().Dy()
 
 	asciiData := make([]rune, imgWidth*imgHeight*int(termData.ratio)+imgHeight) // + imgHeight for newlines
 
 	dataWidth := imgWidth*int(termData.ratio) + 1
 	for y := 0; y < imgHeight; y++ {
 		for x := 0; x < imgWidth; x++ {
-			r, g, b, a_uint := resizedImg.At(x, y).RGBA()
+			r, g, b, a_uint := (*img).At(x, y).RGBA()
 			r, g, b, a := normalizeRGBA(r, g, b, a_uint)
 			brightness := toBrightness(r, g, b, a)
 			chr := toASCII(brightness)
@@ -61,9 +84,45 @@ func convertImage(img *image.RGBA) *Image {
 		}
 		asciiData[(y+1)*dataWidth-1] = '\n'
 	}
+	return asciiData
+}
 
-	return &Image{
-		data:       asciiData,
-		needsClear: needsClear,
+const ANSI_COLOR_LENGTH = 19
+const ANSI_RESET = "\033[0m"
+
+func imgToASCIIColor(img *image.Image) []rune {
+	imgWidth, imgHeight := (*img).Bounds().Dx(), (*img).Bounds().Dy()
+
+	totalSize := imgHeight * (imgWidth*(len(ANSI_RESET)+ANSI_COLOR_LENGTH+int(termData.ratio)) + 1)
+
+	asciiData := make([]rune, totalSize)
+
+	index := 0
+	prevColor := ""
+	for y := 0; y < imgHeight; y++ {
+		for x := 0; x < imgWidth; x++ {
+			r, g, b, a_uint := (*img).At(x, y).RGBA()
+			r, g, b, a := normalizeRGBA(r, g, b, a_uint)
+			brightness := toBrightness(r, g, b, a)
+			chr := toASCII(brightness)
+
+			color := ANSICol(false, int(r), int(g), int(b))
+			if color != prevColor {
+				copy(asciiData[index:], []rune(ANSI_RESET))
+				index += len(ANSI_RESET)
+
+				copy(asciiData[index:], []rune(color))
+				index += ANSI_COLOR_LENGTH
+				prevColor = color
+			}
+
+			for i := 0; i < int(termData.ratio); i++ {
+				asciiData[index+i] = chr
+			}
+			index += int(termData.ratio)
+		}
+		asciiData[index] = '\n'
+		index++
 	}
+	return asciiData
 }
