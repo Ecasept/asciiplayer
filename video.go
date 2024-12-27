@@ -90,9 +90,6 @@ func GetVideoInfo(filename string) (width, height int, fps float64, sampleRate i
 	if width == -1 {
 		raiseErr(errors.New("Could not find video stream in \"" + filename + "\""))
 	}
-	if sampleRate == -1 {
-		raiseErr(errors.New("Could not find audio stream in \"" + filename + "\""))
-	}
 	return width, height, fps, sampleRate
 }
 
@@ -110,7 +107,7 @@ func execFFmpeg(filename string, writer io.WriteCloser, fps float64) {
 		WithOutput(writer).
 		Run()
 	if err != nil {
-		raiseErr(err)
+		raiseErr(errors.New("Error running ffmpeg: " + err.Error()))
 	}
 	writer.Close()
 }

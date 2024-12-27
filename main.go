@@ -174,8 +174,11 @@ func main() {
 	images := make(chan *Image)
 	go ConvertVideo(videoLoader.output, images)
 
-	audioPlayer := NewAudioPlayer(filename, sampleRate)
-	go audioPlayer.Load()
+	var audioPlayer *AudioPlayer = nil
+	if sampleRate != -1 {
+		audioPlayer = NewAudioPlayer(filename, sampleRate)
+		go audioPlayer.Load()
+	}
 
 	go catchSIGINT()
 

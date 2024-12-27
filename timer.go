@@ -29,7 +29,9 @@ type Timer struct {
 
 func (t *Timer) Wait() (data *Image, isLastFrame bool) {
 	if !t.isPlaying {
-		t.audioPlayer.Play(t)
+		if t.audioPlayer != nil {
+			t.audioPlayer.Play(t)
+		}
 		t.endTime = time.Now()
 		t.startTime = t.endTime
 		t.isPlaying = true
