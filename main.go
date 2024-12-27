@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"image"
 	"io"
 	"log"
 	"os"
@@ -71,6 +70,8 @@ func raiseErr(err error) {
 func onExit() {
 	exitAlternateBuffer()
 	showCursor()
+
+	timer.Stop()
 
 	// Close the logger if it's a file
 	switch logger.Writer().(type) {
@@ -149,7 +150,8 @@ func renderData(img *Image) {
 
 var logger = log.New(io.Discard, "", 0)
 
-// Main function
+var timer *Timer
+
 func main() {
 	filename := parseArgs()
 
@@ -160,18 +162,18 @@ func main() {
 
 	updateTerminalSize()
 
-	rawVideo := make(chan *image.RGBA)
-	go LoadVideo(filename, rawVideo, width, height, fps)
+	videoLoader := NewVideoLoader(filename, fps, width, height)
+	go videoLoader.Start()
 
 	images := make(chan *Image)
-	go ConvertVideo(rawVideo, images)
+	go ConvertVideo(videoLoader.output, images)
 
 	audioPlayer := NewAudioPlayer(filename, sampleRate)
 	go audioPlayer.Load()
 
 	go catchSIGINT()
 
-	timer := NewTimer(images, fps, audioPlayer)
+	timer = NewTimer(images, fps, audioPlayer, videoLoader)
 
 	// Setup terminal
 	enterAlternateBuffer()
@@ -186,4 +188,5 @@ func main() {
 		}
 		renderData(data)
 	}
+	onExit()
 }

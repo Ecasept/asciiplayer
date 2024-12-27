@@ -15,6 +15,31 @@ import (
 	"gopkg.in/vansante/go-ffprobe.v2"
 )
 
+var errProgramExit = errors.New("program exit")
+
+type VideoLoader struct {
+	filename string
+	fps      float64
+	width    int
+	height   int
+	output   chan *image.RGBA
+	reader   *io.PipeReader
+	writer   *io.PipeWriter
+}
+
+func NewVideoLoader(filename string, samplerate float64, width, height int) *VideoLoader {
+	reader, writer := io.Pipe()
+	return &VideoLoader{
+		filename: filename,
+		fps:      samplerate,
+		width:    width,
+		height:   height,
+		output:   make(chan *image.RGBA),
+		reader:   reader,
+		writer:   writer,
+	}
+}
+
 // Open the video file with ffprobe and extract the width, height and framerate
 func GetVideoInfo(filename string) (width, height int, fps float64, sampleRate int) {
 	validateExistance(filename)
@@ -97,7 +122,7 @@ func sendOutput(reader io.ReadCloser, out chan *image.RGBA, width, height int) {
 	for {
 		// start := time.Now()
 		n, err := io.ReadFull(reader, buf)
-		if err == io.EOF {
+		if err == io.EOF || err == errProgramExit {
 			close(out)
 			break
 		} else if err == io.ErrUnexpectedEOF {
@@ -131,8 +156,11 @@ func validateExistance(filename string) {
 		}
 	}
 }
-func LoadVideo(filename string, out chan *image.RGBA, width, height int, fps float64) {
-	reader, writer := io.Pipe()
-	go execFFmpeg(filename, writer, fps)
-	sendOutput(reader, out, width, height)
+func (v *VideoLoader) Start() {
+	go execFFmpeg(v.filename, v.writer, float64(v.fps))
+	sendOutput(v.reader, v.output, v.width, v.height)
+}
+
+func (v *VideoLoader) Close() {
+	v.writer.CloseWithError(errProgramExit)
 }
