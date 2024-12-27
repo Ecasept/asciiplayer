@@ -13,9 +13,6 @@ import (
 	"syscall"
 )
 
-// Frames per Second
-var FPS float64
-
 var (
 	CHARS_ASCII = []rune{
 		' ', '.', '\'', '`', '^', '"', ',',
