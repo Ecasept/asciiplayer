@@ -97,20 +97,13 @@ func parseArgs() string {
 	var enableLogger bool
 	var showHelp bool
 	flag.UintVar(&ratio, "ratio", 0, "Size of a character as height/width. Will be calculated automatically if not set or set to 0")
-	// flag.BoolVar(&frameSkip, "fs", false, "Skip current frame if previous frame took to long to render")
 	flag.BoolVar(&allowResize, "resize", false, "Continuously resize video to fit terminal size")
 	flag.UintVar(&userWidth, "w", 0, "Width of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
 	flag.UintVar(&userHeight, "h", 0, "Height of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
 	flag.UintVar(&userFPS, "fps", 0, "Specify the frames per second of the video. Defaults to the video's fps.")
-	// flag.IntVar(&preloadLength, "p", 0, "How many seconds to let the program load before playing the video")
-	// flag.BoolVar(&showLate, "no-lat", false, "Hide the latency display that display latency information for the previous frame")
-	// flag.BoolVar(&showQueue, "q", false, "Show the size of the queue")
 	flag.StringVar(&userChars, "ch", "ascii", "Character set - Defaults to \"ascii\", options are: \"ascii\", \"ascii_no_space\" and \"block\"")
-	// flag.Float64Var(&maxQueueSizeSeconds, "qs", 10, "How many seconds of video the queue should be able load at maximum")
-	// flag.StringVar(&colorModeString, "cm", "text", "Color mode - Defaults to \"text\", Options are \"text\" (no color), \"fg\" and \"bg\"")
 	flag.BoolVar(&showHelp, "help", false, "Show help")
 	flag.BoolVar(&enableLogger, "log", false, "Enable logger for debugging")
-	// flag.BoolVar(&advancedFrameSkip, "afs", false, "WARNING: EXPERIMENTAL - Normal Frameskip will skip the rendering of frames, but not the processing. This means that, even with frameskip enabled, the video can fall behind due to the processing of the frame taking to long. Advanced Frameskip tries to fix this by forcing the data loader to skip frames while keeping everything in sync.")
 	flag.Parse()
 
 	filename := flag.Arg(0)

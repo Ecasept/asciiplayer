@@ -97,12 +97,15 @@ func sendOutput(reader io.ReadCloser, out chan *image.RGBA, width, height int) {
 	for {
 		// start := time.Now()
 		n, err := io.ReadFull(reader, buf)
-		// fmt.Println(time.Since(start))
-		if n == 0 || err == io.EOF {
+		if err == io.EOF {
 			close(out)
 			break
-		} else if n != frameSize || err != nil {
-			panic(err)
+		} else if err == io.ErrUnexpectedEOF {
+			raiseErr(errors.New("File ended unexpectedly while reading frame: " + err.Error()))
+		} else if err != nil {
+			raiseErr(errors.New("Error reading frame: " + err.Error()))
+		} else if n != frameSize {
+			raiseErr(errors.New("Read wrong number of bytes: " + strconv.Itoa(n) + " instead of " + strconv.Itoa(frameSize)))
 		}
 		out <- pixToImage(&buf, width, height)
 	}
@@ -120,7 +123,7 @@ func pixToImage(arr *[]uint8, width, height int) *image.RGBA {
 
 func validateExistance(filename string) {
 	if _, err := os.Stat(filename); err != nil {
-		// Handle wrong filename gracefully, otherwise panic
+		// Better error message for file not found
 		if errors.Is(err, os.ErrNotExist) {
 			raiseErr(errors.New("Could not find file \"" + filename + "\""))
 		} else {
