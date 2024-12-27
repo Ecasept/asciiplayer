@@ -95,7 +95,7 @@ func parseArgs() string {
 	var enableLogger bool
 	var showHelp bool
 	flag.UintVar(&ratio, "ratio", 0, "Size of a character as height/width. Will be calculated automatically if not set or set to 0")
-	flag.BoolVar(&allowResize, "resize", false, "Continuously resize video to fit terminal size")
+	flag.BoolVar(&allowResize, "resize", true, "Continuously resize video to fit terminal size")
 	flag.UintVar(&userWidth, "w", 0, "Width of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
 	flag.UintVar(&userHeight, "h", 0, "Height of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
 	flag.UintVar(&userFPS, "fps", 0, "Specify the frames per second of the video. Defaults to the video's fps.")
