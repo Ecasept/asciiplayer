@@ -1,0 +1,135 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"image"
+	"io"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	ffmpeg "github.com/u2takey/ffmpeg-go"
+	"gopkg.in/vansante/go-ffprobe.v2"
+)
+
+// Open the video file with ffprobe and extract the width, height and framerate
+func GetVideoInfo(filename string) (width, height int, fps float64, sampleRate int) {
+	validateExistance(filename)
+
+	// Open file with ffprobe
+	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFn()
+
+	data, err := ffprobe.ProbeURL(ctx, filename)
+	if err != nil {
+		raiseErr(err)
+	}
+
+	// Video files can have multiple streams, we need to find the video stream
+	streams := data.Streams
+	width = -1
+	height = -1
+	fps = -1.0
+	sampleRate = -1
+	for _, stream := range streams {
+		if stream.CodecType == "video" {
+			width = stream.Width
+			height = stream.Height
+			// The framerate is a fraction, we need to convert it to a float
+			parts := strings.Split(stream.AvgFrameRate, "/")
+			hadError := false
+			if len(parts) == 2 {
+				numerator, err := strconv.ParseFloat(parts[0], 64)
+				denominator, err2 := strconv.ParseFloat(parts[1], 64)
+				if err != nil || err2 != nil {
+					hadError = true
+				} else {
+					fps = numerator / denominator
+				}
+			} else {
+				hadError = true
+			}
+			if hadError {
+				raiseErr(errors.New("Could not parse framerate. Expected format: \"float/float\". Got: \"" + stream.AvgFrameRate + "\""))
+			}
+		} else if stream.CodecType == "audio" {
+			sampleRate, err = strconv.Atoi(stream.SampleRate)
+			if err != nil {
+				raiseErr(errors.New("Could not parse sample rate. Expected integer. Got: \"" + stream.SampleRate + "\""))
+			}
+		}
+	}
+	if width == -1 {
+		raiseErr(errors.New("Could not find video stream in \"" + filename + "\""))
+	}
+	if sampleRate == -1 {
+		raiseErr(errors.New("Could not find audio stream in \"" + filename + "\""))
+	}
+	return width, height, fps, sampleRate
+}
+
+func execFFmpeg(filename string, writer io.WriteCloser, fps float64) {
+	// disable logger
+	log.SetOutput(io.Discard)
+
+	err := ffmpeg.Input(filename).
+		Output("pipe:", ffmpeg.KwArgs{
+			"format":  "rawvideo",
+			"pix_fmt": "rgba",
+			"vframes": "20000",
+			"r":       fps,
+		}).
+		WithOutput(writer).
+		Run()
+	if err != nil {
+		raiseErr(err)
+	}
+	writer.Close()
+}
+
+func sendOutput(reader io.ReadCloser, out chan *image.RGBA, width, height int) {
+	frameSize := width * height * 4
+	buf := make([]uint8, frameSize)
+	defer reader.Close()
+	for {
+		// start := time.Now()
+		n, err := io.ReadFull(reader, buf)
+		// fmt.Println(time.Since(start))
+		if n == 0 || err == io.EOF {
+			close(out)
+			break
+		} else if n != frameSize || err != nil {
+			panic(err)
+		}
+		out <- pixToImage(&buf, width, height)
+	}
+}
+
+func pixToImage(arr *[]uint8, width, height int) *image.RGBA {
+	rect := image.Rect(0, 0, width, height)
+	stride := 4 * rect.Dx()
+	return &image.RGBA{
+		Pix:    *arr,
+		Stride: stride, // distance between two vertically adjacent pixels in bytes
+		Rect:   rect,
+	}
+}
+
+func validateExistance(filename string) {
+	if _, err := os.Stat(filename); err != nil {
+		// Handle wrong filename gracefully, otherwise panic
+		if errors.Is(err, os.ErrNotExist) {
+			raiseErr(errors.New("Could not find file \"" + filename + "\""))
+		} else {
+			raiseErr(errors.New("Can't open file \"" + filename + "\": " + err.Error()))
+		}
+	}
+}
+func LoadVideo(filename string, out chan *image.RGBA, width, height int, fps float64) {
+	reader, writer := io.Pipe()
+	go execFFmpeg(filename, writer, fps)
+	sendOutput(reader, out, width, height)
+}

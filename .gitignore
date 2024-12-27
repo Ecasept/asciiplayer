@@ -1,0 +1,9 @@
+# assets for testing
+assets/
+
+build/
+
+.vscode/
+
+# log file for testing
+log.txt
