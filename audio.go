@@ -54,8 +54,6 @@ func (a *AudioStreamer) calcDesync() int {
 	currentTime := time.Now()
 	targetPos := beep.SampleRate(a.sampleRate).N(currentTime.Sub(a.timer.startTime))
 
-	logger.Printf("Audio desync: %dms", a.sampleRate.D(targetPos-a.pos)/time.Millisecond)
-
 	return targetPos - a.pos
 }
 
