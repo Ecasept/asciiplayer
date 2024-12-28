@@ -1,4 +1,4 @@
-module asciiplayer
+module github.com/Ecasept/asciiplayer
 
 go 1.21
 
