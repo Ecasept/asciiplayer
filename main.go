@@ -97,25 +97,31 @@ func parseArgs() string {
 	var userChars string
 	var enableLogger bool
 	var showHelp bool
-	flag.UintVar(&ratio, "ratio", 0, "Size of a character as height/width. Will be calculated automatically if not set or set to 0")
-	flag.BoolVar(&allowResize, "resize", true, "Continuously resize video to fit terminal size")
-	flag.UintVar(&userWidth, "w", 0, "Width of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
-	flag.UintVar(&userHeight, "h", 0, "Height of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
-	flag.UintVar(&userFPS, "fps", 0, "Specify the frames per second of the video. Defaults to the video's fps.")
-	flag.StringVar(&userChars, "ch", "ascii", "Character set - Defaults to \"ascii\", options are: \"ascii\", \"ascii_no_space\", \"block\" and \"filled\"")
-	flag.BoolVar(&showHelp, "help", false, "Show help")
+	flag.UintVar(&ratio, "ratio", 0, "Ratio between a characters height and width. Each character will be printed as many times as specified here. Will be calculated automatically if not set or set to 0")
+	flag.BoolVar(&allowResize, "resize", true, "Resize the video if the terminal size changes")
+	flag.UintVar(&userWidth, "width", 0, "Width of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
+	flag.UintVar(&userHeight, "height", 0, "Height of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
+	flag.UintVar(&userFPS, "fps", 0, "FPS with which the video should be played the video. Defaults to the video's fps.")
+	flag.StringVar(&userChars, "ch", "ascii", "Character set, options are: \"ascii\", \"ascii_no_space\", \"block\" and \"filled\"")
+	flag.BoolVar(&showHelp, "h", false, "Show this help text")
 	flag.BoolVar(&enableLogger, "log", false, "Enable logger for debugging")
 	flag.BoolVar(&colorEnabled, "c", false, "Enable color output")
 	flag.Parse()
 
-	filename := flag.Arg(0)
-	if filename == "" {
-		raiseErr(errors.New("no filename specified"))
-	}
-
 	if showHelp {
 		exitAlternateBuffer()
 		flag.CommandLine.SetOutput(os.Stdout)
+		fmt.Println("\033[1mUsage:\033[0m")
+		flag.PrintDefaults()
+		onExit()
+		os.Exit(0)
+	}
+
+	filename := flag.Arg(0)
+	if filename == "" {
+		exitAlternateBuffer()
+		flag.CommandLine.SetOutput(os.Stdout)
+		fmt.Println("No video file specified.\n\033[1mUsage:\033[0m")
 		flag.PrintDefaults()
 		onExit()
 		os.Exit(0)
