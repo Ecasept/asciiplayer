@@ -37,7 +37,7 @@ asciiplayer video.mkv # ... and many other formats
 asciiplayer -c video.mp4 # enable color
 asciiplayer -c -ch filled video.mp4 # use unicode full blocks (█) to render colored video
 asciiplayer -fps 10 video.mp4 # play video at specific fps
-asciiplayer -height 20 # play video at a specific resolution
+asciiplayer -height 20 video.mp4 # play video at a specific resolution
 asciiplayer -h # show help
 ```
 
