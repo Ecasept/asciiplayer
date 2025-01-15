@@ -83,13 +83,17 @@ func onExit() {
 	}
 }
 
+func cleanupAndExit() {
+	onExit()
+	os.Exit(0)
+}
+
 // Catches a SIGINT (Ctrl+C) and executes `onExit()`
 func catchSIGINT() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
-	onExit()
-	os.Exit(0)
+	cleanupAndExit()
 }
 
 // Parses command line arguments and sets corresponding flags
@@ -113,8 +117,7 @@ func parseArgs() string {
 		flag.CommandLine.SetOutput(os.Stdout)
 		fmt.Println("\033[1mUsage:\033[0m")
 		flag.PrintDefaults()
-		onExit()
-		os.Exit(0)
+		cleanupAndExit()
 	}
 
 	filename := flag.Arg(0)
@@ -123,8 +126,7 @@ func parseArgs() string {
 		flag.CommandLine.SetOutput(os.Stdout)
 		fmt.Println("No video file specified.\n\033[1mUsage:\033[0m")
 		flag.PrintDefaults()
-		onExit()
-		os.Exit(0)
+		cleanupAndExit()
 	}
 	if len(flag.Args()) > 1 {
 		raiseErr(fmt.Errorf("too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args())))
