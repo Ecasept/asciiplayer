@@ -144,13 +144,17 @@ func pixToImage(arr *[]uint8, width, height int) *image.RGBA {
 }
 
 func validateExistance(filename string) {
-	if _, err := os.Stat(filename); err != nil {
+	info, err := os.Stat(filename)
+	if err != nil {
 		// Better error message for file not found
 		if errors.Is(err, os.ErrNotExist) {
 			raiseErr(errors.New("Could not find file \"" + filename + "\""))
 		} else {
 			raiseErr(errors.New("Can't open file \"" + filename + "\": " + err.Error()))
 		}
+	}
+	if info.IsDir() {
+		raiseErr(errors.New("File \"" + filename + "\" is a directory"))
 	}
 }
 func (v *VideoLoader) Start() {
