@@ -2,7 +2,6 @@ package main
 
 // Definitions
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -144,7 +143,7 @@ func parseArgs() string {
 	if enableLogger {
 		f, err := os.Create("log.txt")
 		if err != nil {
-			raiseErr(errors.New("Could not create log file: " + err.Error()))
+			raiseErr(fmt.Errorf("could not create log file: %s", err.Error()))
 		}
 		logger.SetOutput(f)
 	}
@@ -159,7 +158,7 @@ func parseArgs() string {
 	case "filled":
 		CHARS = []rune{'█'}
 	default:
-		raiseErr(errors.New("Unknown character set " + userChars))
+		raiseErr(fmt.Errorf("unknown character set \"%s\"", userChars))
 	}
 
 	return filename

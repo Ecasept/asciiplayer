@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/binary"
-	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -170,7 +170,7 @@ func (a *AudioPlayer) Load() {
 
 	err := speaker.Init(a.sampleRate, a.streamer.speakerBufferSize)
 	if err != nil {
-		raiseErr(errors.New("Failed to initialize speaker: " + err.Error()))
+		raiseErr(fmt.Errorf("failed to initialize speaker: %s", err.Error()))
 	}
 
 	close(a.initialized)

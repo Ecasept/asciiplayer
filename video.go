@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"io"
 	"log"
@@ -78,17 +79,17 @@ func GetVideoInfo(filename string) (width, height int, fps float64, sampleRate i
 				hadError = true
 			}
 			if hadError {
-				raiseErr(errors.New("Could not parse framerate. Expected format: \"float/float\". Got: \"" + stream.AvgFrameRate + "\""))
+				raiseErr(fmt.Errorf("could not parse framerate - expected format: \"float/float\", got \"%s\"", stream.AvgFrameRate))
 			}
 		} else if stream.CodecType == "audio" {
 			sampleRate, err = strconv.Atoi(stream.SampleRate)
 			if err != nil {
-				raiseErr(errors.New("Could not parse sample rate. Expected integer. Got: \"" + stream.SampleRate + "\""))
+				raiseErr(fmt.Errorf("could not parse sample rate - expected integer, got \"%s\"", stream.SampleRate))
 			}
 		}
 	}
 	if width == -1 {
-		raiseErr(errors.New("Could not find video stream in \"" + filename + "\""))
+		raiseErr(fmt.Errorf("could not find video stream in file \"%s\"", filename))
 	}
 	return width, height, fps, sampleRate
 }
@@ -107,7 +108,7 @@ func execFFmpeg(filename string, writer io.WriteCloser, fps float64) {
 		WithOutput(writer).
 		Run()
 	if err != nil {
-		raiseErr(errors.New("Error running ffmpeg: " + err.Error()))
+		raiseErr(fmt.Errorf("error running ffmpeg: %s", err.Error()))
 	}
 	writer.Close()
 }
@@ -123,11 +124,11 @@ func sendOutput(reader io.ReadCloser, out chan *image.RGBA, width, height int) {
 			close(out)
 			break
 		} else if err == io.ErrUnexpectedEOF {
-			raiseErr(errors.New("File ended unexpectedly while reading frame: " + err.Error()))
+			raiseErr(fmt.Errorf("file ended unexpectedly while reading frame: %s", err.Error()))
 		} else if err != nil {
-			raiseErr(errors.New("Error reading frame: " + err.Error()))
+			raiseErr(fmt.Errorf("error reading video frame: %s", err.Error()))
 		} else if n != frameSize {
-			raiseErr(errors.New("Read wrong number of bytes: " + strconv.Itoa(n) + " instead of " + strconv.Itoa(frameSize)))
+			raiseErr(fmt.Errorf("read wrong number of bytes from video - expected %d (size of frame), got %d", n, frameSize))
 		}
 		out <- pixToImage(&buf, width, height)
 	}
@@ -148,13 +149,13 @@ func validateExistance(filename string) {
 	if err != nil {
 		// Better error message for file not found
 		if errors.Is(err, os.ErrNotExist) {
-			raiseErr(errors.New("Could not find file \"" + filename + "\""))
+			raiseErr(fmt.Errorf("could not find file \"%s\"", filename))
 		} else {
-			raiseErr(errors.New("Can't open file \"" + filename + "\": " + err.Error()))
+			raiseErr(fmt.Errorf("can't open file \"%s\": %s", filename, err.Error()))
 		}
 	}
 	if info.IsDir() {
-		raiseErr(errors.New("File \"" + filename + "\" is a directory"))
+		raiseErr(fmt.Errorf("can't read \"%s\": is a directory", filename))
 	}
 }
 func (v *VideoLoader) Start() {
