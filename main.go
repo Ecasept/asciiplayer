@@ -126,6 +126,9 @@ func parseArgs() string {
 		onExit()
 		os.Exit(0)
 	}
+	if len(flag.Args()) > 1 {
+		raiseErr(fmt.Errorf("too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args())))
+	}
 
 	if enableLogger {
 		f, err := os.Create("log.txt")
