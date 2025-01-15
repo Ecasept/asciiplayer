@@ -12,6 +12,8 @@ import (
 	"syscall"
 )
 
+const VERSION = "0.1.1"
+
 var (
 	CHARS_ASCII = []rune{
 		' ', '.', '\'', '`', '^', '"', ',',
@@ -101,6 +103,7 @@ func parseArgs() string {
 	var userChars string
 	var enableLogger bool
 	var showHelp bool
+	var showVersion bool
 	flag.UintVar(&ratio, "ratio", 0, "Ratio between a characters height and width. Each character will be printed as many times as specified here. Will be calculated automatically if not set or set to 0")
 	flag.BoolVar(&allowResize, "resize", true, "Resize the video if the terminal size changes")
 	flag.UintVar(&userWidth, "width", 0, "Width of video. Will be calculated automatically based on the terminal size if not set or set to 0. Maintains aspect ratio.")
@@ -110,7 +113,13 @@ func parseArgs() string {
 	flag.BoolVar(&showHelp, "h", false, "Show this help text")
 	flag.BoolVar(&enableLogger, "log", false, "Enable logger for debugging")
 	flag.BoolVar(&colorEnabled, "c", false, "Enable color output")
+	flag.BoolVar(&showVersion, "v", false, "Ouptut the current version")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println("asciiplayer version " + VERSION)
+		cleanupAndExit()
+	}
 
 	if showHelp {
 		exitAlternateBuffer()
