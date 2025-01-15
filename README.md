@@ -53,3 +53,7 @@ cd asciiplayer
 go build -o build/asciiplayer .
 ./build/asciiplayer -v # verify that it worked
 ```
+
+# License
+
+This project is licensed under the GNU General Public License v3.0 or later.
