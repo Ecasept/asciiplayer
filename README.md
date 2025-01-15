@@ -51,5 +51,5 @@ You can also build the binary yourself:
 git clone https://github.com/Ecasept/asciiplayer
 cd asciiplayer
 go build -o build/asciiplayer .
-./build/asciiplayer -h # verify that it worked
+./build/asciiplayer -v # verify that it worked
 ```
