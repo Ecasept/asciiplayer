@@ -4,8 +4,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -77,11 +75,7 @@ func onExit() {
 		timer.Stop()
 	}
 
-	// Close the logger if it's a file
-	switch logger.Writer().(type) {
-	case *os.File:
-		logger.Writer().(*os.File).Close()
-	}
+	logger.Close()
 }
 
 func cleanupAndExit() {
@@ -146,6 +140,7 @@ func parseArgs() string {
 			raiseErr(fmt.Errorf("could not create log file: %s", err.Error()))
 		}
 		logger.SetOutput(f)
+		logger.SetLevel(DEBUG)
 	}
 
 	switch userChars {
@@ -172,8 +167,6 @@ func renderData(img *Image) {
 	moveHome()
 	fmt.Print(str)
 }
-
-var logger = log.New(io.Discard, "", 0)
 
 var timer *Timer
 

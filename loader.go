@@ -92,7 +92,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 		duration := stream.Duration()
 		streamType := stream.CodecParameters().MediaType()
 		fps := l.inputFormatContext.GuessFrameRate(stream, nil)
-		logger.Printf("found stream %d: %s, duration: %s, fps: %f\n", i, streamType.String(), duration, fps)
+		logger.Info("found stream %d: %s, duration: %d, fps: %s", i, streamType.String(), duration, fps.String())
 
 		switch streamType {
 		case astiav.MediaTypeAudio:
@@ -114,7 +114,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 			raiseErr(fmt.Errorf("could not find decoder for stream %d", i))
 		}
 
-		logger.Println("Decoding with codec:", decoder.codec.Name())
+		logger.Info("Decoding with codec: %s", decoder.codec.Name())
 
 		// Allocate space for the decoding context
 		if decoder.codecContext = astiav.AllocCodecContext(decoder.codec); decoder.codecContext == nil {
@@ -155,7 +155,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 
 func (l *MediaLoader) Close() {
 	if !l.inited {
-		raiseErr(errors.New("Tried to close file when no file was open"))
+		raiseErr(errors.New("tried to close file when no file was open"))
 	}
 	l.closer.Close()
 
@@ -173,11 +173,11 @@ func (l *MediaLoader) Close() {
 func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
 	img, err := data.GuessImageFormat()
 	if err != nil {
-		logger.Printf("Skipping frame because guessing image format failed: %v", err)
+		logger.Error("Skipping frame because guessing image format failed: %v", err)
 		return
 	}
 	if err := data.ToImage(img); err != nil {
-		logger.Printf("Skipping frame because image conversion failed: %v", err)
+		logger.Error("Skipping frame because image conversion failed: %v", err)
 		return
 	}
 
@@ -199,11 +199,14 @@ func (l *MediaLoader) SendAudioFrame(data *astiav.FrameData) {
 // @returns true if no more frames are available
 func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 	if err := decoder.codecContext.ReceiveFrame(decoder.frame); err != nil {
-		if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
-			// No more frames, or no frame available
+		if errors.Is(err, astiav.ErrEof) {
+			logger.Info("No more frames available")
+			return true
+		} else if errors.Is(err, astiav.ErrEagain) {
+			logger.Debug("Current batch of frames ended")
 			return true
 		}
-		logger.Printf("Receiving frame failed, skipping: %v", err)
+		logger.Error("Receiving frame failed, skipping: %v", err)
 		return false
 	}
 
@@ -212,10 +215,10 @@ func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 
 	// Get image
 	if decoder.inputStream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
-		logger.Println("Sending video frame")
+		logger.Debug("Sending video frame")
 		l.SendVideoFrame(data)
 	} else {
-		logger.Println("Sending audio frame")
+		logger.Debug("Sending audio frame")
 		l.SendAudioFrame(data)
 	}
 
@@ -224,28 +227,30 @@ func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 }
 
 // Reads a packet from the file and sends it to the decoder
-func (l *MediaLoader) ProcessPacket() {
-	logger.Println("Reading frames")
+// @returns true if no more packets are available
+func (l *MediaLoader) ProcessPacket() bool {
+	logger.Debug("Reading packet")
 
 	if err := l.inputFormatContext.ReadFrame(l.packet); err != nil {
 		if errors.Is(err, astiav.ErrEof) {
-			return
+			logger.Info("No more packets available")
+			return true
 		}
-		logger.Printf("Failed to read packet, skipping: %v\n", err)
-		return
+		logger.Error("Failed to read packet, skipping: %v\n", err)
+		return false
 	}
 	defer l.packet.Unref()
 
 	decoder, ok := l.streamDecoders[l.packet.StreamIndex()]
 	if !ok {
-		logger.Printf("Packet does not have a stream, skipping")
-		return
+		logger.Error("Packet does not have a stream, skipping")
+		return false
 	}
 
 	// Send packet to decoder
 	if err := decoder.codecContext.SendPacket(l.packet); err != nil {
-		logger.Printf("Failed to send packet to decoder: %v", err)
-		return
+		logger.Error("Failed to send packet to decoder: %v", err)
+		return false
 	}
 
 	// Receive frames
@@ -254,6 +259,7 @@ func (l *MediaLoader) ProcessPacket() {
 			break
 		}
 	}
+	return false
 }
 
 func (l *MediaLoader) OverwriteFPS(fps uint) {
@@ -267,8 +273,14 @@ func (l *MediaLoader) OverwriteFPS(fps uint) {
 
 // Starts loading the file and sending frames to the output channel
 func (l *MediaLoader) Start() {
+	if !l.inited {
+		raiseErr(errors.New("tried to start loading when no file was open"))
+	}
+
 	for {
-		l.ProcessPacket()
+		if l.ProcessPacket() {
+			break
+		}
 	}
 }
 
@@ -282,7 +294,7 @@ func NewMediaLoader() *MediaLoader {
 				cs = " - class: " + cl.String()
 			}
 		}
-		logger.Printf("ffmpeg log: %s%s - level: %d\n", strings.TrimSpace(msg), cs, l)
+		logger.Debug("ffmpeg log: %s%s - level: %d\n", strings.TrimSpace(msg), cs, l)
 	})
 
 	loader := &MediaLoader{

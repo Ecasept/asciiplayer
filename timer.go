@@ -44,7 +44,7 @@ func (t *Timer) Wait() (data *Image, isLastFrame bool) {
 	if timeLeft > 0 {
 		time.Sleep(timeLeft)
 	} else {
-		logger.Println("Frame took too long to render")
+		logger.Info("Frame took too long to render")
 	}
 
 	data, ok := <-t.dataChannel
