@@ -180,14 +180,14 @@ var timer *Timer
 func main() {
 	filename := parseArgs()
 
-	width, height, fps, sampleRate := GetVideoInfo(filename)
+	_, _, fps, sampleRate := GetVideoInfo(filename)
 	if userFPS != 0 {
 		fps = float64(userFPS)
 	}
 
 	updateTerminalSize()
 
-	videoLoader := NewVideoLoader(filename, fps, width, height)
+	videoLoader := NewVideoLoader(filename)
 	go videoLoader.Start()
 
 	images := make(chan *Image)

@@ -23,6 +23,8 @@
 
 # Usage
 
+NOTE: you will need to have ffmpeg 7+ installed.
+
 #### Play a video:
 
 ```sh
@@ -52,6 +54,20 @@ git clone https://github.com/Ecasept/asciiplayer
 cd asciiplayer
 go build -o build/asciiplayer .
 ./build/asciiplayer -v # verify that it worked
+```
+
+# Build
+
+To build the project, you will need to have the ffmpeg development libraries installed:
+
+```sh
+# Fedora
+# Check which version of ffmpeg you have installed:
+dnf list --installed "ffmpeg*"
+# If you have `ffmpeg-free` installed:
+sudo dnf install ffmpeg-free-devel
+# If you have `ffmpeg` installed:
+sudo dnf install ffmpeg-devel
 ```
 
 # License
