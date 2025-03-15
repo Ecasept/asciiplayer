@@ -179,21 +179,23 @@ var timer *Timer
 
 func main() {
 	filename := parseArgs()
+	loader := NewMediaLoader()
+	loader.OpenFile(filename)
 
-	_, _, fps, sampleRate := GetVideoInfo(filename)
 	if userFPS != 0 {
-		fps = float64(userFPS)
+		loader.OverwriteFPS(userFPS)
 	}
 
 	updateTerminalSize()
 
-	videoLoader := NewVideoLoader(filename)
-	go videoLoader.Start()
+	go loader.Start()
 
 	images := make(chan *Image)
-	go ConvertVideo(videoLoader.output, images)
+	go ConvertVideo(loader.videoOutput, images)
 
 	var audioPlayer *AudioPlayer = nil
+	sampleRate := 44100
+	fps := 30.0
 	if sampleRate != -1 {
 		audioPlayer = NewAudioPlayer(filename, sampleRate)
 		go audioPlayer.Load()
@@ -201,7 +203,7 @@ func main() {
 
 	go catchSIGINT()
 
-	timer = NewTimer(images, fps, audioPlayer, videoLoader)
+	timer = NewTimer(images, fps, audioPlayer, loader)
 
 	// Setup terminal
 	enterAlternateBuffer()

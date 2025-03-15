@@ -6,7 +6,7 @@ import (
 )
 
 // Returns a new timer that waits `waitTime` and gets its data from `dataLoader`
-func NewTimer(dataChannel chan *Image, fps float64, audioPlayer *AudioPlayer, videoLoader *VideoLoader) *Timer {
+func NewTimer(dataChannel chan *Image, fps float64, audioPlayer *AudioPlayer, videoLoader *MediaLoader) *Timer {
 	return &Timer{
 		dataChannel: dataChannel,
 		waitTime:    time.Duration(math.Round(1/fps*1e9)) * time.Nanosecond,
@@ -22,7 +22,7 @@ type Timer struct {
 	waitTime    time.Duration
 	endTime     time.Time
 	audioPlayer *AudioPlayer
-	videoLoader *VideoLoader
+	videoLoader *MediaLoader
 	isPlaying   bool
 	startTime   time.Time
 }
