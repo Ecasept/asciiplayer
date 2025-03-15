@@ -94,7 +94,7 @@ func catchSIGINT() {
 // Parses command line arguments and sets corresponding flags
 func parseArgs() string {
 	var userChars string
-	var enableLogger bool
+	var logLevel string
 	var showHelp bool
 	var showVersion bool
 	flag.UintVar(&ratio, "ratio", 0, "Ratio between a characters height and width. Each character will be printed as many times as specified here. Will be calculated automatically if not set or set to 0")
@@ -104,7 +104,7 @@ func parseArgs() string {
 	flag.UintVar(&userFPS, "fps", 0, "FPS with which the video should be played the video. Defaults to the video's fps.")
 	flag.StringVar(&userChars, "ch", "ascii", "Character set, options are: \"ascii\", \"ascii_no_space\", \"block\" and \"filled\"")
 	flag.BoolVar(&showHelp, "h", false, "Show this help text")
-	flag.BoolVar(&enableLogger, "log", false, "Enable logger for debugging")
+	flag.StringVar(&logLevel, "log", "none", "Log level, options are: \"none\", \"info\", \"debug\", \"error\". Default is \"none\". If set to something different to \"none\", logs will be written to a file called \"log.txt\"")
 	flag.BoolVar(&colorEnabled, "c", false, "Enable color output")
 	flag.BoolVar(&showVersion, "v", false, "Ouptut the current version")
 	flag.Parse()
@@ -134,13 +134,22 @@ func parseArgs() string {
 		raiseErr(fmt.Errorf("too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args())))
 	}
 
-	if enableLogger {
+	if logLevel != "none" {
 		f, err := os.Create("log.txt")
 		if err != nil {
 			raiseErr(fmt.Errorf("could not create log file: %s", err.Error()))
 		}
 		logger.SetOutput(f)
-		logger.SetLevel(DEBUG)
+		switch logLevel {
+		case "info":
+			logger.SetLevel(INFO)
+		case "debug":
+			logger.SetLevel(DEBUG)
+		case "error":
+			logger.SetLevel(ERROR)
+		default:
+			raiseErr(fmt.Errorf("unknown log level \"%s\"", logLevel))
+		}
 	}
 
 	switch userChars {
@@ -176,7 +185,7 @@ func main() {
 	loader.OpenFile(filename)
 
 	if userFPS != 0 {
-		loader.OverwriteFPS(userFPS)
+		// TODO: Implement custom FPS
 	}
 
 	updateTerminalSize()
@@ -190,7 +199,7 @@ func main() {
 	sampleRate := 44100
 	fps := 30.0
 	if sampleRate != -1 {
-		audioPlayer = NewAudioPlayer(filename, sampleRate)
+		audioPlayer = NewAudioPlayer(loader.audioOutput, sampleRate)
 		go audioPlayer.Load()
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -31,30 +32,31 @@ func (l *Logger) SetOutput(w *os.File) {
 
 func NewLogger() *Logger {
 	return &Logger{
-		logger: log.New(io.Discard, "", log.LstdFlags),
+		logger: log.New(io.Discard, "", log.LstdFlags|log.Lmicroseconds),
 		level:  NONE,
 	}
 }
 
-// Log a debug message with format specifiers and a new line
-func (l *Logger) Debug(format string, v ...any) {
-	if l.level >= DEBUG {
-		l.logger.Printf("DEBUG: "+format+"\n", v...)
+func (l *Logger) log(level int, levelTag string, tag string, format string, v ...any) {
+	if l.level >= level {
+		msg := fmt.Sprintf(format, v...)
+		l.logger.Printf("%s - %s: %s\n", levelTag, tag, msg)
 	}
+}
+
+// Log a debug message with format specifiers and a new line
+func (l *Logger) Debug(tag string, format string, v ...any) {
+	l.log(DEBUG, "DEBUG", tag, format, v...)
 }
 
 // Log an info message with format specifiers and a new line
-func (l *Logger) Info(format string, v ...any) {
-	if l.level >= INFO {
-		l.logger.Printf("INFO: "+format+"\n", v...)
-	}
+func (l *Logger) Info(tag string, format string, v ...any) {
+	l.log(INFO, "INFO", tag, format, v...)
 }
 
 // Log an error message with format specifiers and no new line
-func (l *Logger) Error(format string, v ...any) {
-	if l.level >= ERROR {
-		l.logger.Printf("ERROR: "+format+"\n", v...)
-	}
+func (l *Logger) Error(tag string, format string, v ...any) {
+	l.log(ERROR, "ERROR", tag, format, v...)
 }
 
 func (l *Logger) Close() {

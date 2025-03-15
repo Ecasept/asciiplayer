@@ -1,32 +1,31 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/gopxl/beep"
 	"github.com/gopxl/beep/speaker"
-	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 const SPEAKER_BUFFER_MILLISECONDS = 100
 const MAX_AUDIO_DESYNC_MILLISECONDS = 20
 
+type AudioFrame [][2]float64
 type AudioPlayer struct {
-	filename    string
 	canPlay     chan bool
 	initialized chan bool
-	reader      *io.PipeReader
-	writer      *io.PipeWriter
 	sampleRate  beep.SampleRate
+	input       chan *AudioFrame
 	streamer    *AudioStreamer
 }
 
 type AudioStreamer struct {
-	reader            *io.PipeReader
 	sampleRate        beep.SampleRate
+	input             chan *AudioFrame
+	currentFrame      *AudioFrame
+	currentFramePos   int
 	err               error
 	timer             *Timer
 	pos               int
@@ -50,120 +49,145 @@ func (a *AudioStreamer) canRecover(err error) bool {
 	}
 }
 
+// Calculate the desync between the audio streamer and the timer.
+// You can interpret this number as by how much the streamer position is shifted compared to the timer,
+// eg. if the streamer is ahead by 10 samples, the desync is 10.
+//
+// @returns the number of samples the audio streamer is behind.
+// A positive number means the audio streamer is ahead of the timer by that many samples.
+// A negative number means the audio streamer is behind the timer by that many samples.
 func (a *AudioStreamer) calcDesync() int {
-	currentTime := time.Now()
-	targetPos := beep.SampleRate(a.sampleRate).N(currentTime.Sub(a.timer.startTime))
+	passedTime := time.Since(a.timer.startTime)
+	targetPos := beep.SampleRate(a.sampleRate).N(passedTime)
 
-	return targetPos - a.pos
+	return a.pos - targetPos
+}
+
+// Return whether the audio streamer needs a new frame.
+// This can be either because no frame has been loaded yet (initial state),
+// or because the current frame has been fully read.
+func (a *AudioStreamer) needsNextFrame() bool {
+	return a.currentFrame == nil || len(*a.currentFrame) == a.currentFramePos
+}
+
+// Loads the next audio frame from the input channel
+// @returns whether a frame was loaded or no more frames are available
+func (a *AudioStreamer) loadNextFrame() (ok bool) {
+	logger.Debug("audio", "Requesting next audio frame")
+	a.currentFramePos = 0
+	a.currentFrame, ok = <-a.input
+	logger.Debug("audio", "Received audio frame")
+	return ok
 }
 
 // Skips ahead `count` samples in `a.reader`
-func (a *AudioStreamer) skipAhead(count int) (success bool) {
-	skipBuffer := make([]float32, count*2)
-	if !a.canRecover(binary.Read(a.reader, binary.LittleEndian, &skipBuffer)) {
-		return false
+// @returns whether any more frames are available
+func (a *AudioStreamer) skipAhead(count int) (ok bool) {
+	if a.needsNextFrame() {
+		if !a.loadNextFrame() {
+			return false
+		}
 	}
 
-	a.pos += count
+	// If we have a frame loaded, skip ahead in the frame
+	frameLength := len(*a.currentFrame)
+	skipAmount := min(count, frameLength-a.currentFramePos)
+	a.pos += skipAmount
+	a.currentFramePos += skipAmount
+	count -= skipAmount
+
+	if count > 0 {
+		// Skip ahead further if this frame is done
+		return a.skipAhead(count)
+	}
 
 	return true
 }
 
-func (a *AudioStreamer) fillWithSilenceUntil(count int, samples [][2]float64) {
-	clear(samples[:count])
-}
-
-func (a *AudioStreamer) loadBufferStartingAt(skipCount int, samples [][2]float64) (n int, ok bool) {
-	loadCount := len(samples) - skipCount
-
-	buffer := make([]float32, loadCount*2) // *2 for stereo
-
-	if !a.canRecover(binary.Read(a.reader, binary.LittleEndian, &buffer)) {
-		return 0, false
-	}
-
-	// Convert float32 to [2]float64
-	for i := 0; i < len(buffer); i += 2 {
-		sampleIndex := i/2 + skipCount
-		samples[sampleIndex] = [2]float64{
-			float64(buffer[i]),   // Left channel
-			float64(buffer[i+1]), // Right channel
-		}
-	}
-
-	samplesRead := len(buffer) / 2
-
-	a.pos += samplesRead
-	return samplesRead, true
-}
-
-func (a *AudioStreamer) Stream(samples [][2]float64) (n int, ok bool) {
-
-	samplesBehind := a.calcDesync()
-
-	// If audio is behind
-	if samplesBehind > a.desyncTolerance {
-		// Skip to the needed position/at most the number of samples in the buffer
-		if !a.skipAhead(min(samplesBehind, len(samples))) {
-			// Error occurred
+// Fills the samples buffer with audio data starting at `skipCount`
+// @returns the number of samples loaded and whether more samples are available
+func (a *AudioStreamer) loadBufferStartingAt(skipCount int, samples AudioFrame) (n int, ok bool) {
+	if a.needsNextFrame() {
+		if !a.loadNextFrame() {
 			return 0, false
 		}
 	}
 
-	samplesAhead := -samplesBehind
-	samplesAhead -= a.speakerBufferSize                    // allow for the speaker buffer to fill
-	samplesAhead = max(min(samplesAhead, len(samples)), 0) // clamp between 0 and len(samples)
+	sampleSpace := len(samples) - skipCount
+	frameSpace := len(*a.currentFrame) - a.currentFramePos
 
-	// If audio is ahead
-	if samplesAhead > a.desyncTolerance {
-		a.fillWithSilenceUntil(samplesAhead, samples)
+	loadCount := min(sampleSpace, frameSpace)
+
+	copy(samples[skipCount:], (*a.currentFrame)[a.currentFramePos:a.currentFramePos+loadCount])
+
+	a.currentFramePos += loadCount
+	a.pos += loadCount
+
+	if loadCount < sampleSpace {
+		// Load another frame
+		// If we don't fill the samples buffer completely,
+		// the audio will have weird pops and clicks
+		n, ok := a.loadBufferStartingAt(skipCount+loadCount, samples)
+		if !ok {
+			return 0, false
+		}
+		return loadCount + n, true
 	}
+
+	return loadCount, true
+}
+
+// Stream function for the beep.Streamer interface
+func (a *AudioStreamer) Stream(samples [][2]float64) (n int, ok bool) {
+	logger.Debug("audio", "Samples requested")
+	defer logger.Debug("audio", "Samples provided")
+
+	desync := a.calcDesync()
+
+	behindTolerance := a.desyncTolerance
+	aheadTolerance := a.desyncTolerance + a.speakerBufferSize // allow for the speaker buffer to fill
+
+	logger.Info("audio", "Audio desync: %d, tolerance %d/%d", desync, -behindTolerance, aheadTolerance)
+
+	// If audio is behind, skip ahead
+	samplesBehind := -desync
+	if samplesBehind > behindTolerance {
+		// Skip to the needed position
+		if !a.skipAhead(samplesBehind) {
+			// No more frames available
+			return 0, false
+		}
+		logger.Debug("audio", "Skipped ahead %d samples", samplesBehind)
+	}
+
+	samplesAhead := desync
+	samplesAhead = max(min(samplesAhead, len(samples)), 0)              // clamp between 0 and len(samples)
+	samplesAhead = tern(samplesAhead > aheadTolerance, samplesAhead, 0) // allow for tolerance
 
 	return a.loadBufferStartingAt(samplesAhead, samples)
 }
 
+// Err function for the beep.Streamer interface
 func (a *AudioStreamer) Err() error {
 	return a.err
 }
 
-func execFFmpegAudio(filename string, writer *io.PipeWriter, sampleRate beep.SampleRate) {
-	err := ffmpeg.Input(filename).
-		Output("pipe:", ffmpeg.KwArgs{
-			"format": "f32le",
-			"acodec": "pcm_f32le",
-			"ar":     sampleRate.N(time.Second),
-			"ac":     2, // stereo audio
-		}).
-		WithOutput(writer).
-		Run()
-	if err != nil {
-		writer.CloseWithError(err)
-		return
-	}
-	writer.Close()
-}
-
-func NewAudioPlayer(filename string, sampleRate int) *AudioPlayer {
-	reader, writer := io.Pipe()
+func NewAudioPlayer(input chan *AudioFrame, sampleRate int) *AudioPlayer {
 	return &AudioPlayer{
-		filename:    filename,
+		input:       input,
 		canPlay:     make(chan bool),
 		initialized: make(chan bool),
-		reader:      reader,
-		writer:      writer,
 		sampleRate:  beep.SampleRate(sampleRate),
 	}
 }
 
 func (a *AudioPlayer) Load() {
-	go execFFmpegAudio(a.filename, a.writer, a.sampleRate)
-
 	a.streamer = &AudioStreamer{
-		reader:            a.reader,
 		sampleRate:        a.sampleRate,
 		err:               nil,
 		timer:             nil,
 		pos:               0,
+		input:             a.input,
 		speakerBufferSize: a.sampleRate.N(time.Millisecond * SPEAKER_BUFFER_MILLISECONDS),
 		desyncTolerance:   a.sampleRate.N(time.Millisecond * MAX_AUDIO_DESYNC_MILLISECONDS),
 	}
@@ -186,6 +210,4 @@ func (a *AudioPlayer) Play(timer *Timer) {
 
 func (a *AudioPlayer) Close() {
 	speaker.Clear()
-	a.reader.Close()
-	a.writer.Close()
 }

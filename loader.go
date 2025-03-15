@@ -7,12 +7,15 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
 	"image/draw"
+	"math"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/asticode/go-astiav"
 	"github.com/asticode/go-astikit"
@@ -33,13 +36,22 @@ type StreamDecoder struct {
 // A loader that can load a file and send the frames
 // to the next part of the pipeline
 type MediaLoader struct {
-	inputFormatContext  *astiav.FormatContext
-	closer              *astikit.Closer
-	packet              *astiav.Packet
-	streamDecoders      map[int]*StreamDecoder
-	inited              bool
-	videoOutput         chan *image.RGBA
+	inputFormatContext *astiav.FormatContext
+	// Things to close
+	closer *astikit.Closer
+	// Allocated space for a packet
+	packet *astiav.Packet
+	// Decoders for the streams
+	streamDecoders map[int]*StreamDecoder
+	// Whether the loader has been initialized
+	inited bool
+	// Channel to send video frames to
+	videoOutput chan *image.RGBA
+	// Channel to send audio frames to
+	audioOutput chan *AudioFrame
+	// Index of the selected video streams
 	selectedAudioStream int
+	// Index of the selected audio streams
 	selectedVideoStream int
 }
 
@@ -92,7 +104,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 		duration := stream.Duration()
 		streamType := stream.CodecParameters().MediaType()
 		fps := l.inputFormatContext.GuessFrameRate(stream, nil)
-		logger.Info("found stream %d: %s, duration: %d, fps: %s", i, streamType.String(), duration, fps.String())
+		logger.Info("loader", "Found stream %d: %s, duration: %d, fps: %s", i, streamType.String(), duration, fps.String())
 
 		switch streamType {
 		case astiav.MediaTypeAudio:
@@ -114,7 +126,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 			raiseErr(fmt.Errorf("could not find decoder for stream %d", i))
 		}
 
-		logger.Info("Decoding with codec: %s", decoder.codec.Name())
+		logger.Info("loader", "Decoding with codec: %s", decoder.codec.Name())
 
 		// Allocate space for the decoding context
 		if decoder.codecContext = astiav.AllocCodecContext(decoder.codec); decoder.codecContext == nil {
@@ -127,10 +139,10 @@ func (l *MediaLoader) OpenFile(filename string) {
 			raiseErr(fmt.Errorf("failed to initialize decoding context %w", err))
 		}
 
-		// // Set framerate
-		// if stream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
-		// 	decoder.decCodecContext.SetFramerate(fps)
-		// }
+		// Set framerate
+		if stream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
+			decoder.codecContext.SetFramerate(fps)
+		}
 
 		// Open codec with context
 		if err := decoder.codecContext.Open(decoder.codec, nil); err != nil {
@@ -138,7 +150,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 		}
 
 		// // Set time base
-		// decoder.decCodecContext.SetTimeBase(stream.TimeBase())
+		decoder.codecContext.SetTimeBase(stream.TimeBase())
 
 		// Allocate frame
 		decoder.frame = astiav.AllocFrame()
@@ -171,13 +183,14 @@ func (l *MediaLoader) Close() {
 //
 // @param data the frame data to convert
 func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
+	start := time.Now()
 	img, err := data.GuessImageFormat()
 	if err != nil {
-		logger.Error("Skipping frame because guessing image format failed: %v", err)
+		logger.Error("loader", "Skipping frame because guessing image format failed: %v", err)
 		return
 	}
 	if err := data.ToImage(img); err != nil {
-		logger.Error("Skipping frame because image conversion failed: %v", err)
+		logger.Error("loader", "Skipping frame because image conversion failed: %v", err)
 		return
 	}
 
@@ -185,11 +198,51 @@ func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
 	rgba := image.NewRGBA(bounds)
 	draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
 
+	logger.Debug("loader", "Converted video frame in %s", time.Since(start))
+
 	l.videoOutput <- rgba
 }
 
-func (l *MediaLoader) SendAudioFrame(data *astiav.FrameData) {
-	// TODO: Implement
+func (l *MediaLoader) SendAudioFrame(decoder *StreamDecoder) {
+	// The frame data will be in a format
+	// We need it as [][2]float64
+	// which is astiav.SampleFormatDbl
+
+	start := time.Now()
+
+	swrCtx := astiav.AllocSoftwareResampleContext()
+	defer swrCtx.Free()
+
+	dstFrame := astiav.AllocFrame()
+	defer dstFrame.Free()
+
+	dstFrame.SetSampleFormat(astiav.SampleFormatDbl)
+	dstFrame.SetSampleRate(decoder.frame.SampleRate())
+	dstFrame.SetChannelLayout(decoder.frame.ChannelLayout())
+
+	swrCtx.ConvertFrame(
+		decoder.frame,
+		dstFrame,
+	)
+
+	// Get the data
+	data, err := dstFrame.Data().Bytes(0)
+	if err != nil {
+		logger.Error("loader", "Failed to get audio frame data: %v", err)
+		return
+	}
+
+	// Convert the data to a slice of [][2]float64
+	audioData := make(AudioFrame, len(data)/16)
+	for i := 0; i < len(data); i += 16 {
+		left := math.Float64frombits(binary.LittleEndian.Uint64(data[i : i+8]))
+		right := math.Float64frombits(binary.LittleEndian.Uint64(data[i+8 : i+16]))
+		audioData[i/16] = [2]float64{left, right}
+	}
+
+	logger.Debug("loader", "Converted audio frame in %s", time.Since(start))
+
+	l.audioOutput <- &audioData
 }
 
 // Receive a frame from the decoder and send it to the output channel
@@ -200,26 +253,23 @@ func (l *MediaLoader) SendAudioFrame(data *astiav.FrameData) {
 func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 	if err := decoder.codecContext.ReceiveFrame(decoder.frame); err != nil {
 		if errors.Is(err, astiav.ErrEof) {
-			logger.Info("No more frames available")
+			logger.Info("loader", "No more frames available")
 			return true
 		} else if errors.Is(err, astiav.ErrEagain) {
-			logger.Debug("Current batch of frames ended")
+			logger.Debug("loader", "Current batch of frames finished")
 			return true
 		}
-		logger.Error("Receiving frame failed, skipping: %v", err)
+		logger.Error("loader", "Receiving frame failed, skipping: %v", err)
 		return false
 	}
-
 	defer decoder.frame.Unref()
-	data := decoder.frame.Data()
 
 	// Get image
 	if decoder.inputStream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
-		logger.Debug("Sending video frame")
+		data := decoder.frame.Data()
 		l.SendVideoFrame(data)
 	} else {
-		logger.Debug("Sending audio frame")
-		l.SendAudioFrame(data)
+		l.SendAudioFrame(decoder)
 	}
 
 	return false
@@ -228,28 +278,29 @@ func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 
 // Reads a packet from the file and sends it to the decoder
 // @returns true if no more packets are available
+// @returns the number of frames sent
 func (l *MediaLoader) ProcessPacket() bool {
-	logger.Debug("Reading packet")
+	logger.Debug("loader", "Reading packet")
 
 	if err := l.inputFormatContext.ReadFrame(l.packet); err != nil {
 		if errors.Is(err, astiav.ErrEof) {
-			logger.Info("No more packets available")
+			logger.Info("loader", "No more packets available")
 			return true
 		}
-		logger.Error("Failed to read packet, skipping: %v\n", err)
+		logger.Error("loader", "Failed to read packet, skipping: %v\n", err)
 		return false
 	}
 	defer l.packet.Unref()
 
 	decoder, ok := l.streamDecoders[l.packet.StreamIndex()]
 	if !ok {
-		logger.Error("Packet does not have a stream, skipping")
+		logger.Error("loader", "Packet does not have a stream, skipping")
 		return false
 	}
 
 	// Send packet to decoder
 	if err := decoder.codecContext.SendPacket(l.packet); err != nil {
-		logger.Error("Failed to send packet to decoder: %v", err)
+		logger.Error("loader", "Failed to send packet to decoder: %v", err)
 		return false
 	}
 
@@ -262,15 +313,6 @@ func (l *MediaLoader) ProcessPacket() bool {
 	return false
 }
 
-func (l *MediaLoader) OverwriteFPS(fps uint) {
-	fpsRational := astiav.NewRational(int(fps), 1)
-	for _, decoder := range l.streamDecoders {
-		if decoder.inputStream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
-			decoder.codecContext.SetFramerate(fpsRational)
-		}
-	}
-}
-
 // Starts loading the file and sending frames to the output channel
 func (l *MediaLoader) Start() {
 	if !l.inited {
@@ -278,9 +320,11 @@ func (l *MediaLoader) Start() {
 	}
 
 	for {
+		start := time.Now()
 		if l.ProcessPacket() {
 			break
 		}
+		logger.Debug("loader", "Processed packet in %s", time.Since(start))
 	}
 }
 
@@ -302,7 +346,8 @@ func NewMediaLoader() *MediaLoader {
 		closer:              nil,
 		streamDecoders:      nil,
 		inited:              false,
-		videoOutput:         make(chan *image.RGBA),
+		videoOutput:         make(chan *image.RGBA, 100),
+		audioOutput:         make(chan *AudioFrame, 100),
 		packet:              nil,
 		selectedAudioStream: -1,
 		selectedVideoStream: -1,
