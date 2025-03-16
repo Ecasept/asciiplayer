@@ -19,7 +19,7 @@ type TermData struct {
 func updateTerminalSize() (changed bool) {
 	rows, cols, width, height, err := GetTerminalSize()
 	if err != nil {
-		raiseErr(err)
+		raiseErr("terminal", err)
 	}
 
 	changed = cols != termData.cols || rows != termData.rows
@@ -58,14 +58,8 @@ func exitAlternateBuffer() {
 	}
 }
 
-func moveHome() {
-	// Moves the curser to the top left using ANSII escape codes
-	fmt.Print("\033[H")
-}
-
-func clearScreen() {
-	fmt.Print("\033[2J")
-}
+var CLEAR_SCREEN_TERM []rune = []rune("\033[2J")
+var MOVE_HOME_TERM []rune = []rune("\033[H")
 
 func hideCursor() {
 	fmt.Print("\033[?25l")

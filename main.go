@@ -54,15 +54,13 @@ func tern[T any](cond bool, true_ T, false_ T) T {
 	}
 }
 
-type Image struct {
-	data       []rune
-	needsClear bool
-}
-
 // Cleanup, print the error and quit
-func raiseErr(err error) {
+func raiseErr(tag string, err error) {
+	if logger != nil {
+		logger.Error(tag, err.Error())
+	}
 	onExit()
-	fmt.Fprintln(os.Stderr, "Error: "+err.Error())
+	fmt.Fprintln(os.Stderr, "ERROR - "+tag+": "+err.Error())
 	os.Exit(1)
 }
 
@@ -70,10 +68,6 @@ func raiseErr(err error) {
 func onExit() {
 	exitAlternateBuffer()
 	showCursor()
-
-	if timer != nil {
-		timer.Stop()
-	}
 
 	logger.Close()
 }
@@ -131,13 +125,13 @@ func parseArgs() string {
 		cleanupAndExit()
 	}
 	if len(flag.Args()) > 1 {
-		raiseErr(fmt.Errorf("too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args())))
+		raiseErr("main", fmt.Errorf("too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args())))
 	}
 
 	if logLevel != "none" {
 		f, err := os.Create("log.txt")
 		if err != nil {
-			raiseErr(fmt.Errorf("could not create log file: %s", err.Error()))
+			raiseErr("main", fmt.Errorf("could not create log file: %s", err.Error()))
 		}
 		logger.SetOutput(f)
 		switch logLevel {
@@ -148,7 +142,7 @@ func parseArgs() string {
 		case "error":
 			logger.SetLevel(ERROR)
 		default:
-			raiseErr(fmt.Errorf("unknown log level \"%s\"", logLevel))
+			raiseErr("main", fmt.Errorf("unknown log level \"%s\"", logLevel))
 		}
 	}
 
@@ -162,27 +156,16 @@ func parseArgs() string {
 	case "filled":
 		CHARS = []rune{'█'}
 	default:
-		raiseErr(fmt.Errorf("unknown character set \"%s\"", userChars))
+		raiseErr("main", fmt.Errorf("unknown character set \"%s\"", userChars))
 	}
 
 	return filename
-}
-
-func renderData(img *Image) {
-	if img.needsClear {
-		clearScreen()
-	}
-	var str string = string(img.data)
-	moveHome()
-	fmt.Print(str)
 }
 
 var timer *Timer
 
 func main() {
 	filename := parseArgs()
-	loader := NewMediaLoader()
-	loader.OpenFile(filename)
 
 	if userFPS != 0 {
 		// TODO: Implement custom FPS
@@ -190,35 +173,8 @@ func main() {
 
 	updateTerminalSize()
 
-	go loader.Start()
-
-	images := make(chan *Image)
-	go ConvertVideo(loader.videoOutput, images)
-
-	var audioPlayer *AudioPlayer = nil
-	sampleRate := 44100
-	fps := 30.0
-	if sampleRate != -1 {
-		audioPlayer = NewAudioPlayer(loader.audioOutput, sampleRate)
-		go audioPlayer.Load()
-	}
+	controller := NewController()
 
 	go catchSIGINT()
-
-	timer = NewTimer(images, fps, audioPlayer, loader)
-
-	// Setup terminal
-	enterAlternateBuffer()
-	clearScreen()
-	hideCursor()
-	defer exitAlternateBuffer()
-
-	for {
-		data, isOver := timer.Wait()
-		if isOver {
-			break
-		}
-		renderData(data)
-	}
-	onExit()
+	controller.Start(filename)
 }

@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/draw"
 	"math"
 	"os"
 	"strings"
@@ -46,7 +45,7 @@ type MediaLoader struct {
 	// Whether the loader has been initialized
 	inited bool
 	// Channel to send video frames to
-	videoOutput chan *image.RGBA
+	videoOutput chan *image.Image
 	// Channel to send audio frames to
 	audioOutput chan *AudioFrame
 	// Index of the selected video streams
@@ -60,20 +59,27 @@ func validateExistance(filename string) {
 	if err != nil {
 		// Better error message for file not found
 		if errors.Is(err, os.ErrNotExist) {
-			raiseErr(fmt.Errorf("could not find file \"%s\"", filename))
+			raiseErr("loader", fmt.Errorf("could not find file \"%s\"", filename))
 		} else {
-			raiseErr(fmt.Errorf("can't open file \"%s\": %s", filename, err.Error()))
+			raiseErr("loader", fmt.Errorf("can't open file \"%s\": %s", filename, err.Error()))
 		}
 	}
 	if info.IsDir() {
-		raiseErr(fmt.Errorf("can't read \"%s\": is a directory", filename))
+		raiseErr("loader", fmt.Errorf("can't read \"%s\": is a directory", filename))
 	}
+}
+
+// Returns basic information about the file
+func (l *MediaLoader) GetInfo() (fps astiav.Rational, sampleRate int) {
+	fps = l.inputFormatContext.GuessFrameRate(l.streamDecoders[l.selectedVideoStream].inputStream, nil)
+	sampleRate = l.streamDecoders[l.selectedAudioStream].codecContext.SampleRate()
+	return
 }
 
 // Opens a file and initializes the loader
 func (l *MediaLoader) OpenFile(filename string) {
 	if l.inited {
-		raiseErr(errors.New("tried to open file when a file was already open"))
+		raiseErr("loader", errors.New("tried to open file when a file was already open"))
 	}
 	l.inited = true
 
@@ -84,19 +90,19 @@ func (l *MediaLoader) OpenFile(filename string) {
 
 	// Allocate input format context
 	if l.inputFormatContext = astiav.AllocFormatContext(); l.inputFormatContext == nil {
-		raiseErr(errors.New("failed to allocate input format context"))
+		raiseErr("loader", errors.New("failed to allocate input format context"))
 	}
 	l.closer.Add(l.inputFormatContext.Free)
 
 	// Open input file
 	if err := l.inputFormatContext.OpenInput(filename, nil, nil); err != nil {
-		raiseErr(fmt.Errorf("failed to open input file: %w", err))
+		raiseErr("loader", fmt.Errorf("failed to open input file: %w", err))
 	}
 	l.closer.Add(l.inputFormatContext.CloseInput)
 
 	// Find stream info
 	if err := l.inputFormatContext.FindStreamInfo(nil); err != nil {
-		raiseErr(fmt.Errorf("could not get information on streams in file: %w", err))
+		raiseErr("loader", fmt.Errorf("could not get information on streams in file: %w", err))
 	}
 
 	// Loop through streams
@@ -123,20 +129,20 @@ func (l *MediaLoader) OpenFile(filename string) {
 		// Create a new stream decoder
 		decoder := &StreamDecoder{inputStream: stream}
 		if decoder.codec = astiav.FindDecoder(stream.CodecParameters().CodecID()); decoder.codec == nil {
-			raiseErr(fmt.Errorf("could not find decoder for stream %d", i))
+			raiseErr("loader", fmt.Errorf("could not find decoder for stream %d", i))
 		}
 
 		logger.Info("loader", "Decoding with codec: %s", decoder.codec.Name())
 
 		// Allocate space for the decoding context
 		if decoder.codecContext = astiav.AllocCodecContext(decoder.codec); decoder.codecContext == nil {
-			raiseErr(errors.New("failed to allocate decoder context"))
+			raiseErr("loader", errors.New("failed to allocate decoder context"))
 		}
 		l.closer.Add(decoder.codecContext.Free)
 
 		// Create decoding context based on stream
 		if err := stream.CodecParameters().ToCodecContext(decoder.codecContext); err != nil {
-			raiseErr(fmt.Errorf("failed to initialize decoding context %w", err))
+			raiseErr("loader", fmt.Errorf("failed to initialize decoding context %w", err))
 		}
 
 		// Set framerate
@@ -146,7 +152,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 
 		// Open codec with context
 		if err := decoder.codecContext.Open(decoder.codec, nil); err != nil {
-			raiseErr(fmt.Errorf("failed to open decoder with context: %w", err))
+			raiseErr("loader", fmt.Errorf("failed to open decoder with context: %w", err))
 		}
 
 		// // Set time base
@@ -167,7 +173,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 
 func (l *MediaLoader) Close() {
 	if !l.inited {
-		raiseErr(errors.New("tried to close file when no file was open"))
+		raiseErr("loader", errors.New("tried to close file when no file was open"))
 	}
 	l.closer.Close()
 
@@ -183,7 +189,6 @@ func (l *MediaLoader) Close() {
 //
 // @param data the frame data to convert
 func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
-	start := time.Now()
 	img, err := data.GuessImageFormat()
 	if err != nil {
 		logger.Error("loader", "Skipping frame because guessing image format failed: %v", err)
@@ -194,13 +199,7 @@ func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
 		return
 	}
 
-	bounds := img.Bounds()
-	rgba := image.NewRGBA(bounds)
-	draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
-
-	logger.Debug("loader", "Converted video frame in %s", time.Since(start))
-
-	l.videoOutput <- rgba
+	l.videoOutput <- &img
 }
 
 func (l *MediaLoader) SendAudioFrame(decoder *StreamDecoder) {
@@ -268,8 +267,10 @@ func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 	if decoder.inputStream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
 		data := decoder.frame.Data()
 		l.SendVideoFrame(data)
+		logger.Debug("loader", "Sent video frame")
 	} else {
 		l.SendAudioFrame(decoder)
+		logger.Debug("loader", "Sent audio frame")
 	}
 
 	return false
@@ -316,7 +317,7 @@ func (l *MediaLoader) ProcessPacket() bool {
 // Starts loading the file and sending frames to the output channel
 func (l *MediaLoader) Start() {
 	if !l.inited {
-		raiseErr(errors.New("tried to start loading when no file was open"))
+		raiseErr("loader", errors.New("tried to start loading when no file was open"))
 	}
 
 	for {
@@ -338,7 +339,7 @@ func NewMediaLoader() *MediaLoader {
 				cs = " - class: " + cl.String()
 			}
 		}
-		logger.Debug("ffmpeg log: %s%s - level: %d\n", strings.TrimSpace(msg), cs, l)
+		logger.Debug("ffmpeg", "%s%s - level: %d\n", strings.TrimSpace(msg), cs, l)
 	})
 
 	loader := &MediaLoader{
@@ -346,8 +347,8 @@ func NewMediaLoader() *MediaLoader {
 		closer:              nil,
 		streamDecoders:      nil,
 		inited:              false,
-		videoOutput:         make(chan *image.RGBA, 100),
-		audioOutput:         make(chan *AudioFrame, 100),
+		videoOutput:         make(chan *image.Image, VIDEO_FRAME_BUFFER_SIZE),
+		audioOutput:         make(chan *AudioFrame, AUDIO_FRAME_BUFFER_SIZE),
 		packet:              nil,
 		selectedAudioStream: -1,
 		selectedVideoStream: -1,

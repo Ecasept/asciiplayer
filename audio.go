@@ -16,9 +16,9 @@ type AudioFrame [][2]float64
 type AudioPlayer struct {
 	canPlay     chan bool
 	initialized chan bool
-	sampleRate  beep.SampleRate
 	input       chan *AudioFrame
 	streamer    *AudioStreamer
+	timer       *Timer
 }
 
 type AudioStreamer struct {
@@ -73,10 +73,10 @@ func (a *AudioStreamer) needsNextFrame() bool {
 // Loads the next audio frame from the input channel
 // @returns whether a frame was loaded or no more frames are available
 func (a *AudioStreamer) loadNextFrame() (ok bool) {
-	logger.Debug("audio", "Requesting next audio frame")
+	logger.Debug("audioPlayer", "Requesting next audio frame")
 	a.currentFramePos = 0
 	a.currentFrame, ok = <-a.input
-	logger.Debug("audio", "Received audio frame")
+	logger.Debug("audioPlayer", "Received audio frame")
 	return ok
 }
 
@@ -139,15 +139,15 @@ func (a *AudioStreamer) loadBufferStartingAt(skipCount int, samples AudioFrame) 
 
 // Stream function for the beep.Streamer interface
 func (a *AudioStreamer) Stream(samples [][2]float64) (n int, ok bool) {
-	logger.Debug("audio", "Samples requested")
-	defer logger.Debug("audio", "Samples provided")
+	logger.Debug("audioPlayer", "Samples requested")
+	defer logger.Debug("audioPlayer", "Samples provided")
 
 	desync := a.calcDesync()
 
 	behindTolerance := a.desyncTolerance
 	aheadTolerance := a.desyncTolerance + a.speakerBufferSize // allow for the speaker buffer to fill
 
-	logger.Info("audio", "Audio desync: %d, tolerance %d/%d", desync, -behindTolerance, aheadTolerance)
+	logger.Info("audioPlayer", "Audio desync: %d, tolerance %d/%d", desync, -behindTolerance, aheadTolerance)
 
 	// If audio is behind, skip ahead
 	samplesBehind := -desync
@@ -157,7 +157,7 @@ func (a *AudioStreamer) Stream(samples [][2]float64) (n int, ok bool) {
 			// No more frames available
 			return 0, false
 		}
-		logger.Debug("audio", "Skipped ahead %d samples", samplesBehind)
+		logger.Debug("audioPlayer", "Skipped ahead %d samples", samplesBehind)
 	}
 
 	samplesAhead := desync
@@ -172,40 +172,33 @@ func (a *AudioStreamer) Err() error {
 	return a.err
 }
 
-func NewAudioPlayer(input chan *AudioFrame, sampleRate int) *AudioPlayer {
+func NewAudioPlayer(input chan *AudioFrame, timer *Timer) *AudioPlayer {
 	return &AudioPlayer{
 		input:       input,
+		timer:       timer,
 		canPlay:     make(chan bool),
 		initialized: make(chan bool),
-		sampleRate:  beep.SampleRate(sampleRate),
 	}
 }
 
-func (a *AudioPlayer) Load() {
+func (a *AudioPlayer) Start(sampleRate int) {
+	bSampleRate := beep.SampleRate(sampleRate)
 	a.streamer = &AudioStreamer{
-		sampleRate:        a.sampleRate,
+		sampleRate:        bSampleRate,
+		timer:             a.timer,
 		err:               nil,
-		timer:             nil,
 		pos:               0,
 		input:             a.input,
-		speakerBufferSize: a.sampleRate.N(time.Millisecond * SPEAKER_BUFFER_MILLISECONDS),
-		desyncTolerance:   a.sampleRate.N(time.Millisecond * MAX_AUDIO_DESYNC_MILLISECONDS),
+		speakerBufferSize: bSampleRate.N(time.Millisecond * SPEAKER_BUFFER_MILLISECONDS),
+		desyncTolerance:   bSampleRate.N(time.Millisecond * MAX_AUDIO_DESYNC_MILLISECONDS),
 	}
 
-	err := speaker.Init(a.sampleRate, a.streamer.speakerBufferSize)
+	err := speaker.Init(bSampleRate, a.streamer.speakerBufferSize)
 	if err != nil {
-		raiseErr(fmt.Errorf("failed to initialize speaker: %s", err.Error()))
+		raiseErr("audioPlayer", fmt.Errorf("failed to initialize speaker: %s", err.Error()))
 	}
 
-	close(a.initialized)
-	<-a.canPlay
 	speaker.Play(a.streamer)
-}
-
-func (a *AudioPlayer) Play(timer *Timer) {
-	<-a.initialized
-	a.streamer.timer = timer
-	close(a.canPlay)
 }
 
 func (a *AudioPlayer) Close() {

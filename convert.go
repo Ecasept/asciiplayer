@@ -4,18 +4,34 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"time"
 
 	"github.com/nfnt/resize"
 )
 
-func ConvertVideo(input chan *image.RGBA, output chan *Image) {
+func NewVideoConverter(input chan *image.Image) *VideoConverter {
+	return &VideoConverter{
+		input:  input,
+		output: make(chan *Image, IMAGE_FRAME_BUFFER_SIZE),
+	}
+}
+
+type VideoConverter struct {
+	input  chan *image.Image
+	output chan *Image
+}
+
+func (v *VideoConverter) Start() {
 	for {
-		img, ok := <-input
+		img, ok := <-v.input
 		if !ok {
-			close(output)
+			close(v.output)
 			return
 		}
-		output <- convertImage(img)
+		start := time.Now()
+		ascii := convertImage(img)
+		logger.Info("videoConverter", "Frame took %v", time.Since(start))
+		v.output <- ascii
 	}
 }
 
@@ -39,7 +55,7 @@ func ANSICol(bg bool, r, g, b int) string {
 	}
 }
 
-func convertImage(img *image.RGBA) *Image {
+func convertImage(img *image.Image) *Image {
 	needsClear := false
 	if !termData.defined || allowResize {
 		needsClear = updateTerminalSize()
@@ -49,7 +65,7 @@ func convertImage(img *image.RGBA) *Image {
 	maxWidth := min(tern(userWidth == 0, termData.cols, userWidth)/termData.ratio, termData.cols/termData.ratio)
 	maxHeight := min(tern(userHeight == 0, termData.rows, userHeight), termData.rows)
 
-	resizedImg := resize.Thumbnail(maxWidth, maxHeight, img, resize.NearestNeighbor)
+	resizedImg := resize.Thumbnail(maxWidth, maxHeight, *img, resize.NearestNeighbor)
 
 	var asciiData []rune
 
