@@ -42,8 +42,8 @@ type MediaLoader struct {
 	packet *astiav.Packet
 	// Decoders for the streams
 	streamDecoders map[int]*StreamDecoder
-	// Whether the loader has been initialized
-	inited bool
+	// Whether a file is open
+	isFileOpen bool
 	// Channel to send video frames to
 	videoOutput chan *image.Image
 	// Channel to send audio frames to
@@ -83,10 +83,10 @@ func (l *MediaLoader) GetInfo() (fps astiav.Rational, sampleRate int) {
 
 // Opens a file and initializes the loader
 func (l *MediaLoader) OpenFile(filename string) {
-	if l.inited {
+	if l.isFileOpen {
 		raiseErr("loader", errors.New("tried to open file when a file was already open"))
 	}
-	l.inited = true
+	l.isFileOpen = true
 
 	validateExistance(filename)
 
@@ -182,7 +182,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 }
 
 func (l *MediaLoader) Close() {
-	if !l.inited {
+	if !l.isFileOpen {
 		raiseErr("loader", errors.New("tried to close file when no file was open"))
 	}
 	l.closer.Close()
@@ -191,7 +191,7 @@ func (l *MediaLoader) Close() {
 	l.closer = nil
 	l.streamDecoders = nil
 
-	l.inited = false
+	l.isFileOpen = false
 }
 
 // Convert the given frame to an image
@@ -327,7 +327,7 @@ func (l *MediaLoader) ProcessPacket() bool {
 
 // Starts loading the file and sending frames to the output channel
 func (l *MediaLoader) Start() {
-	if !l.inited {
+	if !l.isFileOpen {
 		raiseErr("loader", errors.New("tried to start loading when no file was open"))
 	}
 
@@ -357,7 +357,7 @@ func NewMediaLoader() *MediaLoader {
 		inputFormatContext:  nil,
 		closer:              nil,
 		streamDecoders:      nil,
-		inited:              false,
+		isFileOpen:          false,
 		videoOutput:         make(chan *image.Image, VIDEO_FRAME_BUFFER_SIZE),
 		audioOutput:         make(chan *AudioFrame, AUDIO_FRAME_BUFFER_SIZE),
 		packet:              nil,

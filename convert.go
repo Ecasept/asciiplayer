@@ -30,7 +30,7 @@ func (v *VideoConverter) Start() {
 		}
 		start := time.Now()
 		ascii := convertImage(img)
-		logger.Info("videoConverter", "Frame took %v", time.Since(start))
+		logger.Info("videoConverter", "Frame took %v to convert", time.Since(start))
 		v.output <- ascii
 	}
 }
