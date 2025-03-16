@@ -33,22 +33,6 @@ type AudioStreamer struct {
 	desyncTolerance   int
 }
 
-// Returns whether the error is recoverable
-func (a *AudioStreamer) canRecover(err error) bool {
-	if err == io.EOF {
-		return false
-	} else if err == io.ErrUnexpectedEOF {
-		// audio ended, samplesRead is the number of samples read
-		// do not return true, as we may still have samples to play
-		return true
-	} else if err != nil {
-		a.err = err
-		return false
-	} else {
-		return true
-	}
-}
-
 // Calculate the desync between the audio streamer and the timer.
 // You can interpret this number as by how much the streamer position is shifted compared to the timer,
 // eg. if the streamer is ahead by 10 samples, the desync is 10.
