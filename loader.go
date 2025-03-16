@@ -280,7 +280,7 @@ func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 		l.SendVideoFrame(data)
 		logger.Debug("loader", "Sent video frame")
 	} else {
-		l.SendAudioFrame(decoder)
+		l.SendAudioFrame(decoder.frame)
 		logger.Debug("loader", "Sent audio frame")
 	}
 
