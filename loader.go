@@ -52,6 +52,11 @@ type MediaLoader struct {
 	selectedAudioStream int
 	// Index of the selected audio streams
 	selectedVideoStream int
+
+	// Preallocated software resample context
+	swrCtx *astiav.SoftwareResampleContext
+	// Preallocated destination frame for audio resampling
+	swrDstFrame *astiav.Frame
 }
 
 func validateExistance(filename string) {
@@ -166,6 +171,11 @@ func (l *MediaLoader) OpenFile(filename string) {
 		l.streamDecoders[i] = decoder
 	}
 
+	l.swrCtx = astiav.AllocSoftwareResampleContext()
+	l.closer.Add(l.swrCtx.Free)
+	l.swrDstFrame = astiav.AllocFrame()
+	l.closer.Add(l.swrDstFrame.Free)
+
 	// Init packet to read frames
 	l.packet = astiav.AllocPacket()
 	l.closer.Add(l.packet.Free)
@@ -202,30 +212,31 @@ func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
 	l.videoOutput <- &img
 }
 
-func (l *MediaLoader) SendAudioFrame(decoder *StreamDecoder) {
-	// The frame data will be in a format
-	// We need it as [][2]float64
-	// which is astiav.SampleFormatDbl
+// Convert the given frame to compatible audio data
+// and send it to the output channel
+//
+// @param frame the frame to convert
+func (l *MediaLoader) SendAudioFrame(frame *astiav.Frame) {
+	// The frame data will be in an unknown format.
+	// In order to use it with beep, we need to convert it to [][2]float64.
+	// We can do this with libswresample by converting the frame to AV_SAMPLE_FMT_DBL.
+	// see https://ffmpeg.org/doxygen/7.0/group__lavu__sampfmts.html#gaf9a51ca15301871723577c730b5865c5
+	// for a list of sample formats.
 
 	start := time.Now()
 
-	swrCtx := astiav.AllocSoftwareResampleContext()
-	defer swrCtx.Free()
+	l.swrDstFrame.SetSampleFormat(astiav.SampleFormatDbl)
+	l.swrDstFrame.SetChannelLayout(frame.ChannelLayout())
+	l.swrDstFrame.SetSampleRate(frame.SampleRate())
 
-	dstFrame := astiav.AllocFrame()
-	defer dstFrame.Free()
-
-	dstFrame.SetSampleFormat(astiav.SampleFormatDbl)
-	dstFrame.SetSampleRate(decoder.frame.SampleRate())
-	dstFrame.SetChannelLayout(decoder.frame.ChannelLayout())
-
-	swrCtx.ConvertFrame(
-		decoder.frame,
-		dstFrame,
+	// No need to allocate data buffer, it will be done by ConvertFrame
+	l.swrCtx.ConvertFrame(
+		frame,
+		l.swrDstFrame,
 	)
 
 	// Get the data
-	data, err := dstFrame.Data().Bytes(0)
+	data, err := l.swrDstFrame.Data().Bytes(0)
 	if err != nil {
 		logger.Error("loader", "Failed to get audio frame data: %v", err)
 		return
