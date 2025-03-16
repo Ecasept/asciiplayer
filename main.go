@@ -171,7 +171,8 @@ func main() {
 		// TODO: Implement custom FPS
 	}
 
-	updateTerminalSize()
+	// Initialize terminal data
+	termData.updateSize()
 
 	controller := NewController()
 

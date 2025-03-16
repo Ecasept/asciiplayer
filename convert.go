@@ -58,7 +58,7 @@ func ANSICol(bg bool, r, g, b int) string {
 func convertImage(img *image.Image) *Image {
 	needsClear := false
 	if !termData.defined || allowResize {
-		needsClear = updateTerminalSize()
+		needsClear = termData.updateSize()
 	}
 
 	// limit size to terminal size and user input

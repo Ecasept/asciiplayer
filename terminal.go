@@ -16,28 +16,28 @@ type TermData struct {
 	ratio     uint // How many characters wide a pixel is
 }
 
-func updateTerminalSize() (changed bool) {
+func (t *TermData) updateSize() (changed bool) {
 	rows, cols, width, height, err := GetTerminalSize()
 	if err != nil {
 		raiseErr("terminal", err)
 	}
 
-	changed = cols != termData.cols || rows != termData.rows
+	changed = cols != t.cols || rows != t.rows
 
-	termData.cols, termData.rows = cols, rows
-	termData.pixWidth, termData.pixHeight = width, height
+	t.cols, t.rows = cols, rows
+	t.pixWidth, t.pixHeight = width, height
 
 	if ratio != 0 {
-		termData.ratio = ratio
-	} else if termData.pixWidth != 0 && termData.pixHeight != 0 {
-		characterHeight := float64(termData.pixHeight) / float64(termData.rows)
-		characterWidth := float64(termData.pixWidth) / float64(termData.cols)
-		termData.ratio = max(1, uint(math.Round(characterHeight/characterWidth)))
+		t.ratio = ratio
+	} else if t.pixWidth != 0 && t.pixHeight != 0 {
+		characterHeight := float64(t.pixHeight) / float64(t.rows)
+		characterWidth := float64(t.pixWidth) / float64(t.cols)
+		t.ratio = max(1, uint(math.Round(characterHeight/characterWidth)))
 	} else {
-		termData.ratio = 2 // good default value
+		t.ratio = 2 // good default value
 	}
 
-	termData.defined = true
+	t.defined = true
 
 	return changed
 }
