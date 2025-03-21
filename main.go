@@ -5,8 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 )
 
 const VERSION = "0.1.1"
@@ -54,37 +52,6 @@ func tern[T any](cond bool, true_ T, false_ T) T {
 	}
 }
 
-// Cleanup, print the error and quit
-func raiseErr(tag string, err error) {
-	if logger != nil {
-		logger.Error(tag, err.Error())
-	}
-	onExit()
-	fmt.Fprintln(os.Stderr, "ERROR - "+tag+": "+err.Error())
-	os.Exit(1)
-}
-
-// Does some cleanup stuff
-func onExit() {
-	exitAlternateBuffer()
-	showCursor()
-
-	logger.Close()
-}
-
-func cleanupAndExit() {
-	onExit()
-	os.Exit(0)
-}
-
-// Catches a SIGINT (Ctrl+C) and executes `onExit()`
-func catchSIGINT() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	<-c
-	cleanupAndExit()
-}
-
 // Parses command line arguments and sets corresponding flags
 func parseArgs() string {
 	var userChars string
@@ -105,24 +72,19 @@ func parseArgs() string {
 
 	if showVersion {
 		fmt.Println("asciiplayer version " + VERSION)
-		cleanupAndExit()
 	}
 
 	if showHelp {
-		exitAlternateBuffer()
 		flag.CommandLine.SetOutput(os.Stdout)
 		fmt.Println("\033[1mUsage:\033[0m")
 		flag.PrintDefaults()
-		cleanupAndExit()
 	}
 
 	filename := flag.Arg(0)
 	if filename == "" {
-		exitAlternateBuffer()
 		flag.CommandLine.SetOutput(os.Stdout)
 		fmt.Println("No video file specified.\n\033[1mUsage:\033[0m")
 		flag.PrintDefaults()
-		cleanupAndExit()
 	}
 	if len(flag.Args()) > 1 {
 		raiseErr("main", fmt.Errorf("too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args())))
@@ -162,9 +124,28 @@ func parseArgs() string {
 	return filename
 }
 
-var timer *Timer
+func catchProgramError() {
+	if r := recover(); r != nil {
+		err := toError(r)
+		// Special handling for tagged errors
+		te, isTe := err.(*TaggedError)
+
+		if logger != nil {
+			if isTe {
+				logger.Error(te.tag, te.err.Error())
+			} else {
+				logger.Error("controller", err.Error())
+			}
+			logger.Close()
+		}
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+	}
+}
 
 func main() {
+	defer catchProgramError()
 	filename := parseArgs()
 
 	if userFPS != 0 {
@@ -176,6 +157,7 @@ func main() {
 
 	controller := NewController()
 
-	go catchSIGINT()
 	controller.Start(filename)
+
+	logger.Info("main", "Exiting")
 }

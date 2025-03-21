@@ -6,13 +6,13 @@ import (
 	"github.com/asticode/go-astiav"
 )
 
-// Returns a new timer that waits `waitTime` and gets its data from `dataLoader`
-func NewTimer(input chan *Image) *Timer {
+func NewTimer(input chan *Image, pctx *PlayerContext) *Timer {
 	return &Timer{
 		input:     input,
 		output:    make(chan *Image, TIMER_BUFFER_SIZE),
 		endTime:   time.Now(),
 		isPlaying: false,
+		pctx:      pctx,
 	}
 }
 
@@ -23,9 +23,10 @@ type Timer struct {
 	endTime   time.Time
 	isPlaying bool
 	startTime time.Time
+	pctx      *PlayerContext
 }
 
-func (t *Timer) Wait() {
+func (t *Timer) wait() {
 	if !t.isPlaying {
 		t.endTime = time.Now()
 		t.startTime = t.endTime
@@ -41,13 +42,6 @@ func (t *Timer) Wait() {
 	} else {
 		logger.Info("timer", "Frame took too long to render")
 	}
-
-	data, ok := <-t.input
-	if !ok {
-		close(t.output)
-		return
-	}
-	t.output <- data
 }
 
 func (t *Timer) Start(fps astiav.Rational) {
@@ -56,6 +50,24 @@ func (t *Timer) Start(fps astiav.Rational) {
 	t.waitTime = time.Duration((den * 1e9 / num))
 
 	for {
-		t.Wait()
+		// Wait for timing
+		t.wait()
+
+		// Receive from input with context checking
+		select {
+		case <-t.pctx.ctx.Done():
+			logger.Info("timer", "Stopped")
+			return
+		case data := <-t.input:
+
+			// Send to output with context checking
+			select {
+			case <-t.pctx.ctx.Done():
+				logger.Info("timer", "Stopped")
+				return
+			case t.output <- data:
+				// Successfully sent data
+			}
+		}
 	}
 }

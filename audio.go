@@ -18,6 +18,7 @@ type AudioPlayer struct {
 	input       chan *AudioFrame
 	streamer    *AudioStreamer
 	timer       *Timer
+	pctx        *PlayerContext
 }
 
 type AudioStreamer struct {
@@ -30,6 +31,7 @@ type AudioStreamer struct {
 	pos               int
 	speakerBufferSize int
 	desyncTolerance   int
+	pctx              *PlayerContext
 }
 
 // Calculate the desync between the audio streamer and the timer.
@@ -58,9 +60,16 @@ func (a *AudioStreamer) needsNextFrame() bool {
 func (a *AudioStreamer) loadNextFrame() (ok bool) {
 	logger.Debug("audioPlayer", "Requesting next audio frame")
 	a.currentFramePos = 0
-	a.currentFrame, ok = <-a.input
-	logger.Debug("audioPlayer", "Received audio frame")
-	return ok
+
+	select {
+	case <-a.pctx.ctx.Done():
+		logger.Info("audioPlayer", "Stopped")
+		return false
+
+	case a.currentFrame = <-a.input:
+		logger.Debug("audioPlayer", "Received audio frame")
+		return true
+	}
 }
 
 // Skips ahead `count` samples in `a.reader`
@@ -155,12 +164,13 @@ func (a *AudioStreamer) Err() error {
 	return a.err
 }
 
-func NewAudioPlayer(input chan *AudioFrame, timer *Timer) *AudioPlayer {
+func NewAudioPlayer(input chan *AudioFrame, timer *Timer, pctx *PlayerContext) *AudioPlayer {
 	return &AudioPlayer{
 		input:       input,
 		timer:       timer,
 		canPlay:     make(chan bool),
 		initialized: make(chan bool),
+		pctx:        pctx,
 	}
 }
 
@@ -172,6 +182,7 @@ func (a *AudioPlayer) Start(sampleRate int) {
 		err:               nil,
 		pos:               0,
 		input:             a.input,
+		pctx:              a.pctx,
 		speakerBufferSize: bSampleRate.N(time.Millisecond * SPEAKER_BUFFER_MILLISECONDS),
 		desyncTolerance:   bSampleRate.N(time.Millisecond * MAX_AUDIO_DESYNC_MILLISECONDS),
 	}
@@ -182,6 +193,10 @@ func (a *AudioPlayer) Start(sampleRate int) {
 	}
 
 	speaker.Play(a.streamer)
+
+	<-a.pctx.ctx.Done()
+	a.Close()
+	logger.Info("audioPlayer", "Stopped")
 }
 
 func (a *AudioPlayer) Close() {

@@ -14,13 +14,14 @@ type Image struct {
 
 type VideoPlayer struct {
 	input  chan *Image
-	done   chan bool
+	pctx   *PlayerContext
 	writer *bufio.Writer
 }
 
-func NewVideoPlayer(input chan *Image) *VideoPlayer {
+func NewVideoPlayer(input chan *Image, pctx *PlayerContext) *VideoPlayer {
 	return &VideoPlayer{
 		input:  input,
+		pctx:   pctx,
 		writer: bufio.NewWriter(os.Stdout),
 	}
 }
@@ -40,20 +41,22 @@ func (v *VideoPlayer) renderData(img *Image) {
 func (v *VideoPlayer) Start() {
 	// Setup terminal
 	enterAlternateBuffer()
+	defer exitAlternateBuffer()
 	fmt.Print(string(CLEAR_SCREEN_TERM))
 	hideCursor()
-	defer exitAlternateBuffer()
+	defer showCursor()
 
 	logger.Info("videoPlayer", "Started")
+
 	for {
-		data, ok := <-v.input
-		if !ok {
-			break
+		select {
+		case <-v.pctx.ctx.Done():
+			logger.Info("videoPlayer", "Stopped")
+			return
+		case data := <-v.input:
+			start := time.Now()
+			v.renderData(data)
+			logger.Info("videoPlayer", "Frame took %v to render", time.Since(start))
 		}
-		start := time.Now()
-		v.renderData(data)
-		logger.Info("videoPlayer", "Frame took %v", time.Since(start))
 	}
-	logger.Info("videoPlayer", "Finished")
-	v.done <- true
 }

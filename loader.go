@@ -57,6 +57,9 @@ type MediaLoader struct {
 	swrCtx *astiav.SoftwareResampleContext
 	// Preallocated destination frame for audio resampling
 	swrDstFrame *astiav.Frame
+
+	// The player context to use for cancellation
+	pctx *PlayerContext
 }
 
 func validateExistance(filename string) {
@@ -92,6 +95,12 @@ func (l *MediaLoader) OpenFile(filename string) {
 
 	l.closer = astikit.NewCloser()
 	l.streamDecoders = make(map[int]*StreamDecoder)
+
+	defer func() {
+		if r := recover(); r != nil {
+			l.Close()
+		}
+	}()
 
 	// Allocate input format context
 	if l.inputFormatContext = astiav.AllocFormatContext(); l.inputFormatContext == nil {
@@ -198,7 +207,7 @@ func (l *MediaLoader) Close() {
 // and send it to the output channel
 //
 // @param data the frame data to convert
-func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
+func (l *MediaLoader) sendVideoFrame(data *astiav.FrameData) {
 	img, err := data.GuessImageFormat()
 	if err != nil {
 		logger.Error("loader", "Skipping frame because guessing image format failed: %v", err)
@@ -209,14 +218,21 @@ func (l *MediaLoader) SendVideoFrame(data *astiav.FrameData) {
 		return
 	}
 
-	l.videoOutput <- &img
+	// Send the image to the output channel, or close if the context is done
+	select {
+	case <-l.pctx.ctx.Done():
+		// Abort work prematurely
+		return
+	case l.videoOutput <- &img:
+		logger.Debug("loader", "Sent video frame")
+	}
 }
 
 // Convert the given frame to compatible audio data
 // and send it to the output channel
 //
 // @param frame the frame to convert
-func (l *MediaLoader) SendAudioFrame(frame *astiav.Frame) {
+func (l *MediaLoader) sendAudioFrame(frame *astiav.Frame) {
 	// The frame data will be in an unknown format.
 	// In order to use it with beep, we need to convert it to [][2]float64.
 	// We can do this with libswresample by converting the frame to AV_SAMPLE_FMT_DBL.
@@ -238,7 +254,7 @@ func (l *MediaLoader) SendAudioFrame(frame *astiav.Frame) {
 	// Get the data
 	data, err := l.swrDstFrame.Data().Bytes(0)
 	if err != nil {
-		logger.Error("loader", "Failed to get audio frame data: %v", err)
+		logger.Error("loader", "Skipping frame because could not get audio frame data: %v", err)
 		return
 	}
 
@@ -252,7 +268,14 @@ func (l *MediaLoader) SendAudioFrame(frame *astiav.Frame) {
 
 	logger.Debug("loader", "Converted audio frame in %s", time.Since(start))
 
-	l.audioOutput <- &audioData
+	// Send the audio data to the output channel, or close if the context is done
+	select {
+	case <-l.pctx.ctx.Done():
+		// Abort work prematurely
+		return
+	case l.audioOutput <- &audioData:
+		logger.Debug("loader", "Sent audio frame")
+	}
 }
 
 // Receive a frame from the decoder and send it to the output channel
@@ -260,7 +283,7 @@ func (l *MediaLoader) SendAudioFrame(frame *astiav.Frame) {
 // @param decoder the decoder to receive the frame from
 //
 // @returns true if no more frames are available
-func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
+func (l *MediaLoader) receiveFrame(decoder *StreamDecoder) bool {
 	if err := decoder.codecContext.ReceiveFrame(decoder.frame); err != nil {
 		if errors.Is(err, astiav.ErrEof) {
 			logger.Info("loader", "No more frames available")
@@ -277,11 +300,9 @@ func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 	// Get image
 	if decoder.inputStream.CodecParameters().MediaType() == astiav.MediaTypeVideo {
 		data := decoder.frame.Data()
-		l.SendVideoFrame(data)
-		logger.Debug("loader", "Sent video frame")
+		l.sendVideoFrame(data)
 	} else {
-		l.SendAudioFrame(decoder.frame)
-		logger.Debug("loader", "Sent audio frame")
+		l.sendAudioFrame(decoder.frame)
 	}
 
 	return false
@@ -291,7 +312,7 @@ func (l *MediaLoader) ReceiveFrame(decoder *StreamDecoder) bool {
 // Reads a packet from the file and sends it to the decoder
 // @returns true if no more packets are available
 // @returns the number of frames sent
-func (l *MediaLoader) ProcessPacket() bool {
+func (l *MediaLoader) processPacket() bool {
 	logger.Debug("loader", "Reading packet")
 
 	if err := l.inputFormatContext.ReadFrame(l.packet); err != nil {
@@ -306,19 +327,19 @@ func (l *MediaLoader) ProcessPacket() bool {
 
 	decoder, ok := l.streamDecoders[l.packet.StreamIndex()]
 	if !ok {
-		logger.Error("loader", "Packet does not have a stream, skipping")
+		logger.Error("loader", "Packet does not belong to a valid stream, skipping")
 		return false
 	}
 
 	// Send packet to decoder
 	if err := decoder.codecContext.SendPacket(l.packet); err != nil {
-		logger.Error("loader", "Failed to send packet to decoder: %v", err)
+		logger.Error("loader", "Failed to send packet to decoder, skipping: %v", err)
 		return false
 	}
 
 	// Receive frames
 	for {
-		if l.ReceiveFrame(decoder) {
+		if l.receiveFrame(decoder) {
 			break
 		}
 	}
@@ -330,18 +351,30 @@ func (l *MediaLoader) Start() {
 	if !l.isFileOpen {
 		raiseErr("loader", errors.New("tried to start loading when no file was open"))
 	}
+	defer l.Close()
 
 	for {
 		start := time.Now()
-		if l.ProcessPacket() {
-			break
+
+		select {
+		case <-l.pctx.ctx.Done():
+			l.Close()
+			logger.Info("loader", "Stopped")
+			return
+		default:
+			if l.processPacket() {
+				// No more packets available
+				l.Close()
+				logger.Info("loader", "Finished loading")
+				return
+			}
 		}
 		logger.Debug("loader", "Processed packet in %s", time.Since(start))
 	}
 }
 
 // Creates a new media loader that uses the go-astiav library
-func NewMediaLoader() *MediaLoader {
+func NewMediaLoader(pctx *PlayerContext) *MediaLoader {
 	astiav.SetLogLevel(astiav.LogLevelError)
 	astiav.SetLogCallback(func(c astiav.Classer, l astiav.LogLevel, fmt, msg string) {
 		var cs string
@@ -363,6 +396,7 @@ func NewMediaLoader() *MediaLoader {
 		packet:              nil,
 		selectedAudioStream: -1,
 		selectedVideoStream: -1,
+		pctx:                pctx,
 	}
 
 	return loader
