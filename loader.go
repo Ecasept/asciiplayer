@@ -80,8 +80,12 @@ func validateExistance(filename string) {
 // Returns basic information about the file
 func (l *MediaLoader) GetInfo() (fps astiav.Rational, sampleRate int) {
 	fps = l.inputFormatContext.GuessFrameRate(l.streamDecoders[l.selectedVideoStream].inputStream, nil)
-	sampleRate = l.streamDecoders[l.selectedAudioStream].codecContext.SampleRate()
-	return
+	if l.selectedAudioStream == -1 {
+		sampleRate = -1
+	} else {
+		sampleRate = l.streamDecoders[l.selectedAudioStream].codecContext.SampleRate()
+	}
+	return fps, sampleRate
 }
 
 // Opens a file and initializes the loader
@@ -178,6 +182,10 @@ func (l *MediaLoader) OpenFile(filename string) {
 
 		// Store stream
 		l.streamDecoders[i] = decoder
+	}
+
+	if l.selectedVideoStream == -1 {
+		raiseErr("loader", errors.New("no video stream found"))
 	}
 
 	l.swrCtx = astiav.AllocSoftwareResampleContext()
@@ -351,7 +359,11 @@ func (l *MediaLoader) Start() {
 	if !l.isFileOpen {
 		raiseErr("loader", errors.New("tried to start loading when no file was open"))
 	}
-	defer l.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			l.Close()
+		}
+	}()
 
 	for {
 		start := time.Now()

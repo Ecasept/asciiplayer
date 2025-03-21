@@ -175,6 +175,11 @@ func NewAudioPlayer(input chan *AudioFrame, timer *Timer, pctx *PlayerContext) *
 }
 
 func (a *AudioPlayer) Start(sampleRate int) {
+	if sampleRate == -1 {
+		// No audio
+		return
+	}
+
 	bSampleRate := beep.SampleRate(sampleRate)
 	a.streamer = &AudioStreamer{
 		sampleRate:        bSampleRate,

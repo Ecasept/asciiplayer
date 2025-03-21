@@ -134,7 +134,7 @@ func catchProgramError() {
 			if isTe {
 				logger.Error(te.tag, te.err.Error())
 			} else {
-				logger.Error("controller", err.Error())
+				logger.Error("unknown", err.Error())
 			}
 			logger.Close()
 		}
