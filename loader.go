@@ -395,7 +395,7 @@ func NewMediaLoader(pctx *PlayerContext) *MediaLoader {
 				cs = " - class: " + cl.String()
 			}
 		}
-		logger.Debug("ffmpeg", "%s%s - level: %d\n", strings.TrimSpace(msg), cs, l)
+		logger.Error("ffmpeg", "%s%s - level: %d\n", strings.TrimSpace(msg), cs, l)
 	})
 
 	loader := &MediaLoader{
