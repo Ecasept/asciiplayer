@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -21,67 +22,50 @@ const (
 // and waited for
 const PCTX_RECEIVER_COUNT = 6
 
+// PlayerContext holds a shared context and error group for managing goroutines.
 type PlayerContext struct {
-	ctx    context.Context
-	cancel context.CancelCauseFunc
-	wg     *sync.WaitGroup
+	// `ctx` is used to control cancellation and deadlines.
+	ctx context.Context
+	// `eg` is the error group for waiting on several goroutines concurrently
+	// and cancelling them all if one fails.
+	eg *errgroup.Group
 }
 
+// Tagges an error with a tag for better identification.
+func tagErr(tag string, err error) error {
+	return &TaggedError{tag: tag, err: err}
+}
+
+// Creates a new error with a tag and a formatted message.
+func taggedErrf(tag string, format string, v ...any) error {
+	return &TaggedError{tag: tag, err: fmt.Errorf(format, v...)}
+}
+
+// TaggedError represents an error with an associated tag for better identification.
 type TaggedError struct {
-	tag string
-	err error
+	tag string // The tag associated with the error
+	err error  // The underlying error
 }
 
-func toError(val any) error {
-	switch v := val.(type) {
-	case string:
-		return errors.New(v)
-	case error:
-		return v
-	default:
-		return fmt.Errorf("%v", v)
-	}
-}
-
+// Error returns the string representation of the TaggedError.
+// Implements the error interface.
 func (e *TaggedError) Error() string {
 	return fmt.Sprintf("ERROR - %s: %s", e.tag, e.err.Error())
 }
 
-func raiseErr(tag string, err error) {
-	// Create a tagged error
-	panic(&TaggedError{tag: tag, err: err})
-}
+func catchSIGINT(pctx *PlayerContext) error {
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signalCh)
 
-func catchSIGINT(pctx *PlayerContext) {
-	signalctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	select {
-	case <-signalctx.Done():
-		// SIGINT received, create an error
-		stop()
+	case <-signalCh:
 		logger.Info("controller", "Caught SIGINT")
-		pctx.cancel(errors.New("user quit"))
-		return
+		return errors.New("user quit")
 	case <-pctx.ctx.Done():
 		// Player context cancelled, stop the signal handler
-		stop()
-		return
+		return nil
 	}
-}
-
-func synchronizedExit(f func(), pctx *PlayerContext) {
-	// This defer will run after the `f` function finishes or panics
-	defer func() {
-		// Signal that this goroutine is done
-		pctx.wg.Done()
-		// Potentially propagate the panic
-		if r := recover(); r != nil {
-			err := toError(r)
-
-			// Cancel the context to stop all other goroutines
-			pctx.cancel(err)
-		}
-	}()
-	f()
 }
 
 type Controller struct {
@@ -94,19 +78,16 @@ type Controller struct {
 	audioPlayer *AudioPlayer
 	videoPlayer *VideoPlayer
 
+	// A context shared by all pipeline components
 	pctx *PlayerContext
 }
 
 func NewController() *Controller {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancelCause(ctx)
-
-	wg := &sync.WaitGroup{}
+	eg, ctx := errgroup.WithContext(context.Background())
 
 	pctx := &PlayerContext{
-		ctx:    ctx,
-		cancel: cancel,
-		wg:     wg,
+		ctx: ctx,
+		eg:  eg,
 	}
 
 	loader := NewMediaLoader(pctx)
@@ -138,22 +119,20 @@ func NewController() *Controller {
 	}
 }
 
-func (c *Controller) Start(filename string) {
-	c.loader.OpenFile(filename)
+func (c *Controller) Start(filename string) error {
+	err := c.loader.OpenFile(filename)
+	if err != nil {
+		return err
+	}
 	fps, sampleRate := c.loader.GetInfo()
 
-	c.pctx.wg.Add(PCTX_RECEIVER_COUNT)
-	go synchronizedExit(c.loader.Start, c.pctx)
-	go synchronizedExit(c.videoConverter.Start, c.pctx)
-	go synchronizedExit(func() { c.timer.Start(fps) }, c.pctx)
-	go synchronizedExit(func() { c.audioPlayer.Start(sampleRate) }, c.pctx)
-	go synchronizedExit(c.videoPlayer.Start, c.pctx)
-	go synchronizedExit(func() { catchSIGINT(c.pctx) }, c.pctx)
+	c.pctx.eg.Go(c.loader.Start)
+	c.pctx.eg.Go(c.videoConverter.Start)
+	c.pctx.eg.Go(func() error { return c.timer.Start(fps) })
+	c.pctx.eg.Go(func() error { return c.audioPlayer.Start(sampleRate) })
+	c.pctx.eg.Go(c.videoPlayer.Start)
+	c.pctx.eg.Go(func() error { return catchSIGINT(c.pctx) })
 
-	c.pctx.wg.Wait()
-
-	err := context.Cause(c.pctx.ctx)
-	if err != nil {
-		panic(err)
-	}
+	err = c.pctx.eg.Wait()
+	return err
 }

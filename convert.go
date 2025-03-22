@@ -23,21 +23,25 @@ type VideoConverter struct {
 	pctx   *PlayerContext
 }
 
-func (v *VideoConverter) Start() {
+func (v *VideoConverter) Start() error {
 	for {
 		select {
 		case <-v.pctx.ctx.Done():
 			logger.Info("videoConverter", "Stopped")
-			return
+			return nil
 		case img := <-v.input:
 			start := time.Now()
-			ascii := convertImage(img)
+
+			ascii, err := convertImage(img)
+			if err != nil {
+				return err
+			}
 			logger.Info("videoConverter", "Frame took %v to convert", time.Since(start))
 
 			select {
 			case <-v.pctx.ctx.Done():
 				logger.Info("videoConverter", "Stopped")
-				return
+				return nil
 			case v.output <- ascii:
 			}
 		}
@@ -64,10 +68,14 @@ func ANSICol(bg bool, r, g, b int) string {
 	}
 }
 
-func convertImage(img *image.Image) *Image {
+func convertImage(img *image.Image) (*Image, error) {
 	needsClear := false
 	if !termData.defined || allowResize {
-		needsClear = termData.updateSize()
+		var err error
+		needsClear, err = termData.updateSize()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// limit size to terminal size and user input
@@ -87,7 +95,7 @@ func convertImage(img *image.Image) *Image {
 	return &Image{
 		data:       asciiData,
 		needsClear: needsClear,
-	}
+	}, nil
 }
 
 func imgToASCII(img *image.Image) []rune {

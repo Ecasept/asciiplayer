@@ -16,10 +16,10 @@ type TermData struct {
 	ratio     uint // How many characters wide a pixel is
 }
 
-func (t *TermData) updateSize() (changed bool) {
+func (t *TermData) updateSize() (changed bool, err error) {
 	rows, cols, width, height, err := GetTerminalSize()
 	if err != nil {
-		raiseErr("terminal", err)
+		return false, tagErr("terminal", err)
 	}
 
 	changed = cols != t.cols || rows != t.rows
@@ -39,7 +39,7 @@ func (t *TermData) updateSize() (changed bool) {
 
 	t.defined = true
 
-	return changed
+	return changed, nil
 }
 
 // Enters a alternate buffer

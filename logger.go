@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-var logger = NewLogger()
+var logger *Logger = nil
 
 type Logger struct {
 	logger *log.Logger

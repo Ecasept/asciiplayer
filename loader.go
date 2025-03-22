@@ -9,7 +9,6 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"image"
 	"math"
 	"os"
@@ -62,19 +61,20 @@ type MediaLoader struct {
 	pctx *PlayerContext
 }
 
-func validateExistance(filename string) {
+func validateExistance(filename string) error {
 	info, err := os.Stat(filename)
 	if err != nil {
 		// Better error message for file not found
 		if errors.Is(err, os.ErrNotExist) {
-			raiseErr("loader", fmt.Errorf("could not find file \"%s\"", filename))
+			return taggedErrf("loader", "could not find file \"%s\"", filename)
 		} else {
-			raiseErr("loader", fmt.Errorf("can't open file \"%s\": %s", filename, err.Error()))
+			return taggedErrf("loader", "can't open file \"%s\": %s", filename, err.Error())
 		}
 	}
 	if info.IsDir() {
-		raiseErr("loader", fmt.Errorf("can't read \"%s\": is a directory", filename))
+		return taggedErrf("loader", "can't read \"%s\": is a directory", filename)
 	}
+	return nil
 }
 
 // Returns basic information about the file
@@ -89,38 +89,35 @@ func (l *MediaLoader) GetInfo() (fps astiav.Rational, sampleRate int) {
 }
 
 // Opens a file and initializes the loader
-func (l *MediaLoader) OpenFile(filename string) {
+func (l *MediaLoader) OpenFile(filename string) error {
 	if l.isFileOpen {
-		raiseErr("loader", errors.New("tried to open file when a file was already open"))
+		return taggedErrf("loader", "tried to open file when a file was already open")
 	}
-	l.isFileOpen = true
 
-	validateExistance(filename)
+	if err := validateExistance(filename); err != nil {
+		return err
+	}
+
+	l.isFileOpen = true
 
 	l.closer = astikit.NewCloser()
 	l.streamDecoders = make(map[int]*StreamDecoder)
 
-	defer func() {
-		if r := recover(); r != nil {
-			l.Close()
-		}
-	}()
-
 	// Allocate input format context
 	if l.inputFormatContext = astiav.AllocFormatContext(); l.inputFormatContext == nil {
-		raiseErr("loader", errors.New("failed to allocate input format context"))
+		return taggedErrf("loader", "failed to allocate input format context")
 	}
 	l.closer.Add(l.inputFormatContext.Free)
 
 	// Open input file
 	if err := l.inputFormatContext.OpenInput(filename, nil, nil); err != nil {
-		raiseErr("loader", fmt.Errorf("failed to open input file: %w", err))
+		return taggedErrf("loader", "failed to open input file %q: %w", filename, err)
 	}
 	l.closer.Add(l.inputFormatContext.CloseInput)
 
 	// Find stream info
 	if err := l.inputFormatContext.FindStreamInfo(nil); err != nil {
-		raiseErr("loader", fmt.Errorf("could not get information on streams in file: %w", err))
+		return taggedErrf("loader", "could not get information on streams in file: %w", err)
 	}
 
 	// Loop through streams
@@ -147,20 +144,20 @@ func (l *MediaLoader) OpenFile(filename string) {
 		// Create a new stream decoder
 		decoder := &StreamDecoder{inputStream: stream}
 		if decoder.codec = astiav.FindDecoder(stream.CodecParameters().CodecID()); decoder.codec == nil {
-			raiseErr("loader", fmt.Errorf("could not find decoder for stream %d", i))
+			return taggedErrf("loader", "could not find decoder for stream %d", i)
 		}
 
 		logger.Info("loader", "Decoding with codec: %s", decoder.codec.Name())
 
 		// Allocate space for the decoding context
 		if decoder.codecContext = astiav.AllocCodecContext(decoder.codec); decoder.codecContext == nil {
-			raiseErr("loader", errors.New("failed to allocate decoder context"))
+			return taggedErrf("loader", "failed to allocate decoder context")
 		}
 		l.closer.Add(decoder.codecContext.Free)
 
 		// Create decoding context based on stream
 		if err := stream.CodecParameters().ToCodecContext(decoder.codecContext); err != nil {
-			raiseErr("loader", fmt.Errorf("failed to initialize decoding context %w", err))
+			return taggedErrf("loader", "failed to initialize decoding context: %w", err)
 		}
 
 		// Set framerate
@@ -170,7 +167,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 
 		// Open codec with context
 		if err := decoder.codecContext.Open(decoder.codec, nil); err != nil {
-			raiseErr("loader", fmt.Errorf("failed to open decoder with context: %w", err))
+			return taggedErrf("loader", "failed to open decoder with context: %w", err)
 		}
 
 		// // Set time base
@@ -185,7 +182,7 @@ func (l *MediaLoader) OpenFile(filename string) {
 	}
 
 	if l.selectedVideoStream == -1 {
-		raiseErr("loader", errors.New("no video stream found"))
+		return taggedErrf("loader", "no video stream found")
 	}
 
 	l.swrCtx = astiav.AllocSoftwareResampleContext()
@@ -196,17 +193,21 @@ func (l *MediaLoader) OpenFile(filename string) {
 	// Init packet to read frames
 	l.packet = astiav.AllocPacket()
 	l.closer.Add(l.packet.Free)
+
+	return nil
 }
 
 func (l *MediaLoader) Close() {
-	if !l.isFileOpen {
-		raiseErr("loader", errors.New("tried to close file when no file was open"))
-	}
 	l.closer.Close()
 
 	l.inputFormatContext = nil
 	l.closer = nil
 	l.streamDecoders = nil
+	l.selectedAudioStream = -1
+	l.selectedVideoStream = -1
+	l.swrCtx = nil
+	l.swrDstFrame = nil
+	l.packet = nil
 
 	l.isFileOpen = false
 }
@@ -290,18 +291,18 @@ func (l *MediaLoader) sendAudioFrame(frame *astiav.Frame) {
 //
 // @param decoder the decoder to receive the frame from
 //
-// @returns true if no more frames are available
+// @returns whether more frames are available
 func (l *MediaLoader) receiveFrame(decoder *StreamDecoder) bool {
 	if err := decoder.codecContext.ReceiveFrame(decoder.frame); err != nil {
 		if errors.Is(err, astiav.ErrEof) {
 			logger.Info("loader", "No more frames available")
-			return true
+			return false
 		} else if errors.Is(err, astiav.ErrEagain) {
 			logger.Debug("loader", "Current batch of frames finished")
-			return true
+			return false
 		}
 		logger.Error("loader", "Receiving frame failed, skipping: %v", err)
-		return false
+		return true
 	}
 	defer decoder.frame.Unref()
 
@@ -313,72 +314,64 @@ func (l *MediaLoader) receiveFrame(decoder *StreamDecoder) bool {
 		l.sendAudioFrame(decoder.frame)
 	}
 
-	return false
-
+	return true
 }
 
 // Reads a packet from the file and sends it to the decoder
-// @returns true if no more packets are available
-// @returns the number of frames sent
+// @returns whether more packets are available
 func (l *MediaLoader) processPacket() bool {
 	logger.Debug("loader", "Reading packet")
 
 	if err := l.inputFormatContext.ReadFrame(l.packet); err != nil {
 		if errors.Is(err, astiav.ErrEof) {
 			logger.Info("loader", "No more packets available")
-			return true
+			return false
 		}
 		logger.Error("loader", "Failed to read packet, skipping: %v\n", err)
-		return false
+		return true
 	}
 	defer l.packet.Unref()
 
 	decoder, ok := l.streamDecoders[l.packet.StreamIndex()]
 	if !ok {
 		logger.Error("loader", "Packet does not belong to a valid stream, skipping")
-		return false
+		return true
 	}
 
 	// Send packet to decoder
 	if err := decoder.codecContext.SendPacket(l.packet); err != nil {
 		logger.Error("loader", "Failed to send packet to decoder, skipping: %v", err)
-		return false
+		return true
 	}
 
 	// Receive frames
 	for {
-		if l.receiveFrame(decoder) {
-			break
+		if !l.receiveFrame(decoder) {
+			// All frames from this packet have been received
+			return true
 		}
 	}
-	return false
 }
 
 // Starts loading the file and sending frames to the output channel
-func (l *MediaLoader) Start() {
+func (l *MediaLoader) Start() error {
 	if !l.isFileOpen {
-		raiseErr("loader", errors.New("tried to start loading when no file was open"))
+		return taggedErrf("loader", "tried to start loading when no file was open")
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			l.Close()
-		}
-	}()
 
 	for {
 		start := time.Now()
 
 		select {
 		case <-l.pctx.ctx.Done():
-			l.Close()
 			logger.Info("loader", "Stopped")
-			return
+			l.Close()
+			return nil
 		default:
-			if l.processPacket() {
+			if !l.processPacket() {
 				// No more packets available
-				l.Close()
 				logger.Info("loader", "Finished loading")
-				return
+				return nil
 			}
 		}
 		logger.Debug("loader", "Processed packet in %s", time.Since(start))

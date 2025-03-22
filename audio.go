@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gopxl/beep"
@@ -13,12 +12,16 @@ const MAX_AUDIO_DESYNC_MILLISECONDS = 20
 
 type AudioFrame [][2]float64
 type AudioPlayer struct {
-	canPlay     chan bool
-	initialized chan bool
-	input       chan *AudioFrame
-	streamer    *AudioStreamer
-	timer       *Timer
-	pctx        *PlayerContext
+	// Whether the audio player is playing a file or not
+	isPlaying bool
+	// The input channel for audio frames
+	input chan *AudioFrame
+	// The thing that actually plays the audio
+	streamer *AudioStreamer
+	// Provides access to timing information
+	timer *Timer
+	// Context for communication with the main goroutine
+	pctx *PlayerContext
 }
 
 type AudioStreamer struct {
@@ -166,19 +169,19 @@ func (a *AudioStreamer) Err() error {
 
 func NewAudioPlayer(input chan *AudioFrame, timer *Timer, pctx *PlayerContext) *AudioPlayer {
 	return &AudioPlayer{
-		input:       input,
-		timer:       timer,
-		canPlay:     make(chan bool),
-		initialized: make(chan bool),
-		pctx:        pctx,
+		input:     input,
+		timer:     timer,
+		pctx:      pctx,
+		isPlaying: false,
 	}
 }
 
-func (a *AudioPlayer) Start(sampleRate int) {
+func (a *AudioPlayer) Start(sampleRate int) error {
 	if sampleRate == -1 {
-		// No audio
-		return
+		logger.Info("audioPlayer", "No audio stream available")
+		return nil
 	}
+	a.isPlaying = true
 
 	bSampleRate := beep.SampleRate(sampleRate)
 	a.streamer = &AudioStreamer{
@@ -194,16 +197,30 @@ func (a *AudioPlayer) Start(sampleRate int) {
 
 	err := speaker.Init(bSampleRate, a.streamer.speakerBufferSize)
 	if err != nil {
-		raiseErr("audioPlayer", fmt.Errorf("failed to initialize speaker: %s", err.Error()))
+		return taggedErrf("audioPlayer", "failed to initialize speaker: %w", err)
 	}
 
-	speaker.Play(a.streamer)
+	done := make(chan struct{})
 
-	<-a.pctx.ctx.Done()
-	a.Close()
-	logger.Info("audioPlayer", "Stopped")
+	speaker.Play(beep.Seq(a.streamer, beep.Callback(func() {
+		close(done)
+	})))
+
+	// Wait for the speaker to finish playing
+	// or for the context to be cancelled
+	select {
+	case <-done:
+		a.Close()
+		logger.Info("audioPlayer", "Finished playing audio")
+	case <-a.pctx.ctx.Done():
+		a.Close()
+		logger.Info("audioPlayer", "Stopped")
+	}
+	return nil
 }
 
 func (a *AudioPlayer) Close() {
 	speaker.Clear()
+	a.isPlaying = false
+	a.streamer = nil
 }

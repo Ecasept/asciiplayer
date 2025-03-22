@@ -1,6 +1,8 @@
 module github.com/Ecasept/asciiplayer
 
-go 1.21
+go 1.23.0
+
+toolchain go1.23.4
 
 require (
 	github.com/gopxl/beep v1.4.1
@@ -21,6 +23,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/u2takey/ffmpeg-go v0.5.0
 	github.com/u2takey/go-utils v0.3.1 // indirect
+	golang.org/x/sync v0.12.0
 	golang.org/x/sys v0.28.0
 	gopkg.in/vansante/go-ffprobe.v2 v2.2.1
 )

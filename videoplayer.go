@@ -38,7 +38,7 @@ func (v *VideoPlayer) renderData(img *Image) {
 
 }
 
-func (v *VideoPlayer) Start() {
+func (v *VideoPlayer) Start() error {
 	// Setup terminal
 	enterAlternateBuffer()
 	defer exitAlternateBuffer()
@@ -52,7 +52,7 @@ func (v *VideoPlayer) Start() {
 		select {
 		case <-v.pctx.ctx.Done():
 			logger.Info("videoPlayer", "Stopped")
-			return
+			return nil
 		case data := <-v.input:
 			start := time.Now()
 			v.renderData(data)

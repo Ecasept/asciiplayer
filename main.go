@@ -52,8 +52,15 @@ func tern[T any](cond bool, true_ T, false_ T) T {
 	}
 }
 
+type QuietError struct{}
+
+func (e QuietError) Error() string {
+	return "quiet error"
+}
+
 // Parses command line arguments and sets corresponding flags
-func parseArgs() string {
+// @returns the filename of the video
+func parseArgs() (string, error) {
 	var userChars string
 	var logLevel string
 	var showHelp bool
@@ -70,30 +77,10 @@ func parseArgs() string {
 	flag.BoolVar(&showVersion, "v", false, "Ouptut the current version")
 	flag.Parse()
 
-	if showVersion {
-		fmt.Println("asciiplayer version " + VERSION)
-	}
-
-	if showHelp {
-		flag.CommandLine.SetOutput(os.Stdout)
-		fmt.Println("\033[1mUsage:\033[0m")
-		flag.PrintDefaults()
-	}
-
-	filename := flag.Arg(0)
-	if filename == "" {
-		flag.CommandLine.SetOutput(os.Stdout)
-		fmt.Println("No video file specified.\n\033[1mUsage:\033[0m")
-		flag.PrintDefaults()
-	}
-	if len(flag.Args()) > 1 {
-		raiseErr("main", fmt.Errorf("too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args())))
-	}
-
 	if logLevel != "none" {
 		f, err := os.Create("log.txt")
 		if err != nil {
-			raiseErr("main", fmt.Errorf("could not create log file: %s", err.Error()))
+			return "", taggedErrf("main", "could not create log file: %s", err.Error())
 		}
 		logger.SetOutput(f)
 		switch logLevel {
@@ -104,8 +91,31 @@ func parseArgs() string {
 		case "error":
 			logger.SetLevel(ERROR)
 		default:
-			raiseErr("main", fmt.Errorf("unknown log level \"%s\"", logLevel))
+			return "", taggedErrf("main", "unknown log level \"%s\"", logLevel)
 		}
+	}
+
+	if showVersion {
+		fmt.Println("asciiplayer version " + VERSION)
+		return "", QuietError{}
+	}
+
+	if showHelp {
+		flag.CommandLine.SetOutput(os.Stdout)
+		fmt.Println("\033[1mUsage:\033[0m")
+		flag.PrintDefaults()
+		return "", QuietError{}
+	}
+
+	filename := flag.Arg(0)
+	if filename == "" {
+		flag.CommandLine.SetOutput(os.Stdout)
+		fmt.Println("No video file specified.\n\033[1mUsage:\033[0m")
+		flag.PrintDefaults()
+		return "", QuietError{}
+	}
+	if len(flag.Args()) > 1 {
+		return "", taggedErrf("main", "too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args()))
 	}
 
 	switch userChars {
@@ -118,46 +128,67 @@ func parseArgs() string {
 	case "filled":
 		CHARS = []rune{'█'}
 	default:
-		raiseErr("main", fmt.Errorf("unknown character set \"%s\"", userChars))
+		return "", taggedErrf("main", "unknown character set \"%s\"", userChars)
 	}
 
-	return filename
+	return filename, nil
 }
 
-func catchProgramError() {
-	if r := recover(); r != nil {
-		err := toError(r)
-		// Special handling for tagged errors
-		te, isTe := err.(*TaggedError)
+func logError(err error) {
+	if err == nil {
+		return
+	}
 
+	// Special handling for some errors
+	te, isTe := err.(*TaggedError)
+	_, isQe := err.(QuietError)
+
+	if isQe {
 		if logger != nil {
-			if isTe {
-				logger.Error(te.tag, te.err.Error())
-			} else {
-				logger.Error("unknown", err.Error())
-			}
-			logger.Close()
+			logger.Info("main", "Exiting silently")
 		}
-		if err != nil {
-			fmt.Println(err.Error())
+		return
+	}
+
+	if logger != nil {
+		if isTe {
+			logger.Error(te.tag, te.err.Error())
+		} else {
+			logger.Error("unknown", err.Error())
 		}
 	}
+
+	fmt.Println(err.Error())
 }
 
 func main() {
-	defer catchProgramError()
-	filename := parseArgs()
+	logger = NewLogger()
+	defer logger.Close()
+
+	filename, err := parseArgs()
+	if err != nil {
+		logError(err)
+		return
+	}
 
 	if userFPS != 0 {
 		// TODO: Implement custom FPS
 	}
 
 	// Initialize terminal data
-	termData.updateSize()
+	_, err = termData.updateSize()
+	if err != nil {
+		logError(err)
+		return
+	}
 
 	controller := NewController()
 
-	controller.Start(filename)
+	err = controller.Start(filename)
+	if err != nil {
+		logError(err)
+		return
+	}
 
 	logger.Info("main", "Exiting")
 }

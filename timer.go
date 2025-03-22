@@ -44,7 +44,7 @@ func (t *Timer) wait() {
 	}
 }
 
-func (t *Timer) Start(fps astiav.Rational) {
+func (t *Timer) Start(fps astiav.Rational) error {
 	num := float64(fps.Num())
 	den := float64(fps.Den())
 	t.waitTime = time.Duration((den * 1e9 / num))
@@ -57,14 +57,14 @@ func (t *Timer) Start(fps astiav.Rational) {
 		select {
 		case <-t.pctx.ctx.Done():
 			logger.Info("timer", "Stopped")
-			return
+			return nil
 		case data := <-t.input:
 
 			// Send to output with context checking
 			select {
 			case <-t.pctx.ctx.Done():
 				logger.Info("timer", "Stopped")
-				return
+				return nil
 			case t.output <- data:
 				// Successfully sent data
 			}
