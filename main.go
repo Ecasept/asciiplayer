@@ -74,7 +74,7 @@ func parseArgs() (string, error) {
 	flag.BoolVar(&showHelp, "h", false, "Show this help text")
 	flag.StringVar(&logLevel, "log", "none", "Log level, options are: \"none\", \"info\", \"debug\", \"error\". Default is \"none\". If set to something different to \"none\", logs will be written to a file called \"log.txt\"")
 	flag.BoolVar(&colorEnabled, "c", false, "Enable color output")
-	flag.BoolVar(&showVersion, "v", false, "Ouptut the current version")
+	flag.BoolVar(&showVersion, "v", false, "Output the current version")
 	flag.Parse()
 
 	if logLevel != "none" {
