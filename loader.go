@@ -378,6 +378,7 @@ func (l *MediaLoader) Start() error {
 		default:
 			if !l.processPacket() {
 				// No more packets available
+				l.Close()
 				close(l.videoOutput)
 				close(l.audioOutput)
 				logger.Info("loader", "Finished loading")
