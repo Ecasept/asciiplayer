@@ -6,16 +6,6 @@ import (
 	"github.com/asticode/go-astiav"
 )
 
-func NewTimer(input chan *Image, pctx *PlayerContext) *Timer {
-	return &Timer{
-		input:     input,
-		output:    make(chan *Image, TIMER_BUFFER_SIZE),
-		endTime:   time.Now(),
-		isPlaying: false,
-		pctx:      pctx,
-	}
-}
-
 type Timer struct {
 	input     chan *Image
 	output    chan *Image
@@ -24,6 +14,21 @@ type Timer struct {
 	isPlaying bool
 	startTime time.Time
 	pctx      *PlayerContext
+}
+
+// Reset recreates the internal channels and sets up the input
+func (t *Timer) Reset(input chan *Image) {
+	t.input = input
+	t.output = make(chan *Image, TIMER_BUFFER_SIZE)
+	t.isPlaying = false
+}
+
+func NewTimer(pctx *PlayerContext) *Timer {
+	return &Timer{
+		endTime: time.Now(),
+		pctx:    pctx,
+	}
+	// Output and input channels set in Reset
 }
 
 func (t *Timer) wait() {
@@ -58,7 +63,12 @@ func (t *Timer) Start(fps astiav.Rational) error {
 		case <-t.pctx.ctx.Done():
 			logger.Info("timer", "Stopped")
 			return nil
-		case data := <-t.input:
+		case data, ok := <-t.input:
+			if !ok {
+				close(t.output)
+				logger.Info("timer", "No more frames to render")
+				return nil
+			}
 
 			// Send to output with context checking
 			select {

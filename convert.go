@@ -9,27 +9,38 @@ import (
 	"github.com/nfnt/resize"
 )
 
-func NewVideoConverter(input chan *image.Image, pctx *PlayerContext) *VideoConverter {
-	return &VideoConverter{
-		input:  input,
-		output: make(chan *Image, IMAGE_FRAME_BUFFER_SIZE),
-		pctx:   pctx,
-	}
-}
-
 type VideoConverter struct {
 	input  chan *image.Image
 	output chan *Image
 	pctx   *PlayerContext
 }
 
+// Reset recreates the output channel and sets up the input
+func (v *VideoConverter) Reset(input chan *image.Image) {
+	v.input = input
+	v.output = make(chan *Image, IMAGE_FRAME_BUFFER_SIZE)
+}
+
+func NewVideoConverter(pctx *PlayerContext) *VideoConverter {
+	return &VideoConverter{
+		pctx: pctx,
+	}
+	// Output and input channels set in Reset
+}
+
 func (v *VideoConverter) Start() error {
 	for {
 		select {
 		case <-v.pctx.ctx.Done():
+			// Error occurred
 			logger.Info("videoConverter", "Stopped")
 			return nil
-		case img := <-v.input:
+		case img, ok := <-v.input:
+			if !ok {
+				close(v.output)
+				logger.Info("videoConverter", "No more frames to convert")
+				return nil
+			}
 			start := time.Now()
 
 			ascii, err := convertImage(img)
@@ -40,6 +51,7 @@ func (v *VideoConverter) Start() error {
 
 			select {
 			case <-v.pctx.ctx.Done():
+				// Error occurred
 				logger.Info("videoConverter", "Stopped")
 				return nil
 			case v.output <- ascii:

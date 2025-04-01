@@ -59,8 +59,8 @@ func (e QuietError) Error() string {
 }
 
 // Parses command line arguments and sets corresponding flags
-// @returns the filename of the video
-func parseArgs() (string, error) {
+// @returns the filenames of the video files to play
+func parseArgs() ([]string, error) {
 	var userChars string
 	var logLevel string
 	var showHelp bool
@@ -80,7 +80,7 @@ func parseArgs() (string, error) {
 	if logLevel != "none" {
 		f, err := os.Create("log.txt")
 		if err != nil {
-			return "", taggedErrf("main", "could not create log file: %s", err.Error())
+			return nil, taggedErrf("main", "could not create log file: %s", err.Error())
 		}
 		logger.SetOutput(f)
 		switch logLevel {
@@ -91,31 +91,30 @@ func parseArgs() (string, error) {
 		case "error":
 			logger.SetLevel(ERROR)
 		default:
-			return "", taggedErrf("main", "unknown log level \"%s\"", logLevel)
+			return nil, taggedErrf("main", "unknown log level \"%s\"", logLevel)
 		}
 	}
 
 	if showVersion {
 		fmt.Println("asciiplayer version " + VERSION)
-		return "", QuietError{}
+		return nil, QuietError{}
 	}
 
 	if showHelp {
 		flag.CommandLine.SetOutput(os.Stdout)
 		fmt.Println("\033[1mUsage:\033[0m")
+		fmt.Println("asciiplayer [flags] <video-files...>")
 		flag.PrintDefaults()
-		return "", QuietError{}
+		return nil, QuietError{}
 	}
 
-	filename := flag.Arg(0)
-	if filename == "" {
+	files := flag.Args()
+	if len(files) == 0 {
 		flag.CommandLine.SetOutput(os.Stdout)
 		fmt.Println("No video file specified.\n\033[1mUsage:\033[0m")
+		fmt.Println("asciiplayer [flags] <video-files...>")
 		flag.PrintDefaults()
-		return "", QuietError{}
-	}
-	if len(flag.Args()) > 1 {
-		return "", taggedErrf("main", "too many arguments (expected 1, got %d) - please specify only one video file", len(flag.Args()))
+		return nil, QuietError{}
 	}
 
 	switch userChars {
@@ -128,10 +127,10 @@ func parseArgs() (string, error) {
 	case "filled":
 		CHARS = []rune{'█'}
 	default:
-		return "", taggedErrf("main", "unknown character set \"%s\"", userChars)
+		return nil, taggedErrf("main", "unknown character set \"%s\"", userChars)
 	}
 
-	return filename, nil
+	return files, nil
 }
 
 func logError(err error) {
@@ -165,7 +164,7 @@ func main() {
 	logger = NewLogger()
 	defer logger.Close()
 
-	filename, err := parseArgs()
+	files, err := parseArgs()
 	if err != nil {
 		logError(err)
 		return
@@ -184,10 +183,13 @@ func main() {
 
 	controller := NewController()
 
-	err = controller.Start(filename)
-	if err != nil {
-		logError(err)
-		return
+	for _, file := range files {
+		err = controller.Play(file)
+		if err != nil {
+			logError(err)
+			return
+		}
+		logger.Info("main", "Finished playing %s", file)
 	}
 
 	logger.Info("main", "Exiting")

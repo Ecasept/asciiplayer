@@ -61,6 +61,14 @@ type MediaLoader struct {
 	pctx *PlayerContext
 }
 
+// Reset recreates the internal channels
+func (l *MediaLoader) Reset() {
+	l.videoOutput = make(chan *image.Image, VIDEO_FRAME_BUFFER_SIZE)
+	l.audioOutput = make(chan *AudioFrame, AUDIO_FRAME_BUFFER_SIZE)
+	l.selectedAudioStream = -1
+	l.selectedVideoStream = -1
+}
+
 func validateExistance(filename string) error {
 	info, err := os.Stat(filename)
 	if err != nil {
@@ -364,12 +372,14 @@ func (l *MediaLoader) Start() error {
 
 		select {
 		case <-l.pctx.ctx.Done():
-			logger.Info("loader", "Stopped")
 			l.Close()
+			logger.Info("loader", "Stopped")
 			return nil
 		default:
 			if !l.processPacket() {
 				// No more packets available
+				close(l.videoOutput)
+				close(l.audioOutput)
 				logger.Info("loader", "Finished loading")
 				return nil
 			}
@@ -396,8 +406,6 @@ func NewMediaLoader(pctx *PlayerContext) *MediaLoader {
 		closer:              nil,
 		streamDecoders:      nil,
 		isFileOpen:          false,
-		videoOutput:         make(chan *image.Image, VIDEO_FRAME_BUFFER_SIZE),
-		audioOutput:         make(chan *AudioFrame, AUDIO_FRAME_BUFFER_SIZE),
 		packet:              nil,
 		selectedAudioStream: -1,
 		selectedVideoStream: -1,

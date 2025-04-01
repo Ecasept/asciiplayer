@@ -18,9 +18,13 @@ type VideoPlayer struct {
 	writer *bufio.Writer
 }
 
-func NewVideoPlayer(input chan *Image, pctx *PlayerContext) *VideoPlayer {
+// Reset sets up the input channel
+func (v *VideoPlayer) Reset(input chan *Image) {
+	v.input = input
+}
+
+func NewVideoPlayer(pctx *PlayerContext) *VideoPlayer {
 	return &VideoPlayer{
-		input:  input,
 		pctx:   pctx,
 		writer: bufio.NewWriter(os.Stdout),
 	}
@@ -53,7 +57,12 @@ func (v *VideoPlayer) Start() error {
 		case <-v.pctx.ctx.Done():
 			logger.Info("videoPlayer", "Stopped")
 			return nil
-		case data := <-v.input:
+		case data, ok := <-v.input:
+			if !ok {
+				v.pctx.playerWG.VideoFinished()
+				logger.Info("videoPlayer", "No more frames to render")
+				return nil
+			}
 			start := time.Now()
 			v.renderData(data)
 			logger.Info("videoPlayer", "Frame took %v to render", time.Since(start))

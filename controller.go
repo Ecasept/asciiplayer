@@ -24,11 +24,13 @@ const PCTX_RECEIVER_COUNT = 6
 
 // PlayerContext holds a shared context and error group for managing goroutines.
 type PlayerContext struct {
-	// `ctx` is used to control cancellation and deadlines.
+	// `ctx` is used to control cancellation.
 	ctx context.Context
 	// `eg` is the error group for waiting on several goroutines concurrently
 	// and cancelling them all if one fails.
 	eg *errgroup.Group
+	// A wait group that signals when all player components finish.
+	playerWG *PlayerFinishedWaitGroup
 }
 
 // Tagges an error with a tag for better identification.
@@ -65,6 +67,9 @@ func catchSIGINT(pctx *PlayerContext) error {
 	case <-pctx.ctx.Done():
 		// Player context cancelled, stop the signal handler
 		return nil
+	case <-pctx.playerWG.Done():
+		// Both audio and video players have finished playing
+		return nil
 	}
 }
 
@@ -82,34 +87,35 @@ type Controller struct {
 	pctx *PlayerContext
 }
 
+// reset resets all components and reconnects them
+func (c *Controller) reset() {
+	// Reset each component with new channels
+	c.loader.Reset()
+	c.videoConverter.Reset(c.loader.videoOutput)
+	c.timer.Reset(c.videoConverter.output)
+	c.audioPlayer.Reset(c.loader.audioOutput, c.timer)
+	c.videoPlayer.Reset(c.timer.output)
+
+	// Reset wait group
+	c.pctx.playerWG.Reset()
+}
+
 func NewController() *Controller {
 	eg, ctx := errgroup.WithContext(context.Background())
 
 	pctx := &PlayerContext{
-		ctx: ctx,
-		eg:  eg,
+		ctx:      ctx,
+		eg:       eg,
+		playerWG: NewPlayerFinishedWaitGroup(),
 	}
 
 	loader := NewMediaLoader(pctx)
+	videoConverter := NewVideoConverter(pctx)
+	timer := NewTimer(pctx)
+	audioPlayer := NewAudioPlayer(pctx)
+	videoPlayer := NewVideoPlayer(pctx)
 
-	videoConverter := NewVideoConverter(
-		loader.videoOutput,
-		pctx,
-	)
-
-	timer := NewTimer(
-		videoConverter.output,
-		pctx)
-
-	audioPlayer := NewAudioPlayer(
-		loader.audioOutput,
-		timer, pctx,
-	)
-	videoPlayer := NewVideoPlayer(
-		timer.output, pctx,
-	)
-
-	return &Controller{
+	controller := &Controller{
 		loader:         loader,
 		videoConverter: videoConverter,
 		timer:          timer,
@@ -117,15 +123,25 @@ func NewController() *Controller {
 		videoPlayer:    videoPlayer,
 		pctx:           pctx,
 	}
+
+	// Initial setup of component connections
+	controller.reset()
+
+	return controller
 }
 
-func (c *Controller) Start(filename string) error {
+func (c *Controller) Play(filename string) error {
+	// Reset to prepare for new video
+	c.reset()
+	c.pctx.playerWG.Reset()
+
 	err := c.loader.OpenFile(filename)
 	if err != nil {
 		return err
 	}
 	fps, sampleRate := c.loader.GetInfo()
 
+	// Start all components
 	c.pctx.eg.Go(c.loader.Start)
 	c.pctx.eg.Go(c.videoConverter.Start)
 	c.pctx.eg.Go(func() error { return c.timer.Start(fps) })
@@ -133,6 +149,7 @@ func (c *Controller) Start(filename string) error {
 	c.pctx.eg.Go(c.videoPlayer.Start)
 	c.pctx.eg.Go(func() error { return catchSIGINT(c.pctx) })
 
+	// Wait for all components to finish normally or with an error
 	err = c.pctx.eg.Wait()
 	return err
 }

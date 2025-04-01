@@ -24,6 +24,12 @@ type AudioPlayer struct {
 	pctx *PlayerContext
 }
 
+// Reset sets up the input channel and timer reference
+func (a *AudioPlayer) Reset(input chan *AudioFrame, timer *Timer) {
+	a.input = input
+	a.timer = timer
+}
+
 type AudioStreamer struct {
 	sampleRate        beep.SampleRate
 	input             chan *AudioFrame
@@ -69,7 +75,11 @@ func (a *AudioStreamer) loadNextFrame() (ok bool) {
 		logger.Info("audioPlayer", "Stopped")
 		return false
 
-	case a.currentFrame = <-a.input:
+	case a.currentFrame, ok = <-a.input:
+		if !ok {
+			logger.Info("audioPlayer", "No more audio frames available")
+			return false
+		}
 		logger.Debug("audioPlayer", "Received audio frame")
 		return true
 	}
@@ -167,10 +177,8 @@ func (a *AudioStreamer) Err() error {
 	return a.err
 }
 
-func NewAudioPlayer(input chan *AudioFrame, timer *Timer, pctx *PlayerContext) *AudioPlayer {
+func NewAudioPlayer(pctx *PlayerContext) *AudioPlayer {
 	return &AudioPlayer{
-		input:     input,
-		timer:     timer,
 		pctx:      pctx,
 		isPlaying: false,
 	}
@@ -178,6 +186,7 @@ func NewAudioPlayer(input chan *AudioFrame, timer *Timer, pctx *PlayerContext) *
 
 func (a *AudioPlayer) Start(sampleRate int) error {
 	if sampleRate == -1 {
+		a.pctx.playerWG.AudioFinished()
 		logger.Info("audioPlayer", "No audio stream available")
 		return nil
 	}
@@ -211,8 +220,10 @@ func (a *AudioPlayer) Start(sampleRate int) error {
 	select {
 	case <-done:
 		a.Close()
+		a.pctx.playerWG.AudioFinished()
 		logger.Info("audioPlayer", "Finished playing audio")
 	case <-a.pctx.ctx.Done():
+		// Error occurred
 		a.Close()
 		logger.Info("audioPlayer", "Stopped")
 	}
