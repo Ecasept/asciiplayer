@@ -23,14 +23,13 @@
 
 # Usage
 
-NOTE: you will need to have ffmpeg 7+ installed.
-
 #### Play a video:
 
 ```sh
 asciiplayer video.mp4
 asciiplayer animated.gif # also supports gif
 asciiplayer video.mkv # ... and many other formats
+asciiplayer v1.mp4 v2.mp4 v3.mp4 # play multiple videos sequentially
 ```
 
 #### More flags:
@@ -61,7 +60,7 @@ go build -o build/asciiplayer .
 To build the project, you will need to have the ffmpeg development libraries installed:
 
 ```sh
-# Fedora
+# For Fedora:
 # Check which version of ffmpeg you have installed:
 dnf list --installed "ffmpeg*"
 # If you have `ffmpeg-free` installed:
