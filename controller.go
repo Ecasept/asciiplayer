@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,6 +23,14 @@ const (
 // and waited for
 const PCTX_RECEIVER_COUNT = 6
 
+// ChannelContainer holds all communication channels for the pipeline
+type ChannelContainer struct {
+	VideoFrames     chan *image.Image
+	AudioFrames     chan *AudioFrame
+	ConvertedFrames chan *Image
+	TimedFrames     chan *Image
+}
+
 // PlayerContext holds a shared context and error group for managing goroutines.
 type PlayerContext struct {
 	// `ctx` is used to control cancellation.
@@ -31,6 +40,21 @@ type PlayerContext struct {
 	eg *errgroup.Group
 	// A wait group that signals when all player components finish.
 	playerWG *PlayerFinishedWaitGroup
+	// central storage for all channels
+	channels ChannelContainer
+}
+
+// Reset resets the player context with a fresh context, error group, wait group,
+// and recreates all communication channels.
+func (p *PlayerContext) Reset() {
+	p.eg, p.ctx = errgroup.WithContext(context.Background())
+	p.playerWG.Reset()
+	p.channels = ChannelContainer{
+		VideoFrames:     make(chan *image.Image, VIDEO_FRAME_BUFFER_SIZE),
+		AudioFrames:     make(chan *AudioFrame, AUDIO_FRAME_BUFFER_SIZE),
+		ConvertedFrames: make(chan *Image, IMAGE_FRAME_BUFFER_SIZE),
+		TimedFrames:     make(chan *Image, TIMER_BUFFER_SIZE),
+	}
 }
 
 // Tagges an error with a tag for better identification.
@@ -87,16 +111,14 @@ type Controller struct {
 	pctx *PlayerContext
 }
 
-// reset resets all components and reconnects them
+// Reset all components
 func (c *Controller) reset() {
-	// Reset each component with new channels
-	c.loader.Reset()
-	c.videoConverter.Reset(c.loader.videoOutput)
-	c.timer.Reset(c.videoConverter.output)
-	c.audioPlayer.Reset(c.loader.audioOutput, c.timer)
-	c.videoPlayer.Reset(c.timer.output)
-
-	// Reset wait group
+	c.pctx.Reset()
+	c.loader.Reset(c.pctx.channels.VideoFrames, c.pctx.channels.AudioFrames)
+	c.videoConverter.Reset(c.pctx.channels.VideoFrames, c.pctx.channels.ConvertedFrames)
+	c.timer.Reset(c.pctx.channels.ConvertedFrames, c.pctx.channels.TimedFrames)
+	c.audioPlayer.Reset(c.pctx.channels.AudioFrames, c.timer)
+	c.videoPlayer.Reset(c.pctx.channels.TimedFrames)
 	c.pctx.playerWG.Reset()
 }
 
@@ -124,14 +146,14 @@ func NewController() *Controller {
 		pctx:           pctx,
 	}
 
-	// Initial setup of component connections
+	// Initially setup controller
 	controller.reset()
 
 	return controller
 }
 
 func (c *Controller) Play(filename string) error {
-	// Reset to prepare for new video
+	// Prepare for new video playback by resetting channels and context.
 	c.reset()
 	c.pctx.playerWG.Reset()
 

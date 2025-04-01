@@ -61,10 +61,10 @@ type MediaLoader struct {
 	pctx *PlayerContext
 }
 
-// Reset recreates the internal channels
-func (l *MediaLoader) Reset() {
-	l.videoOutput = make(chan *image.Image, VIDEO_FRAME_BUFFER_SIZE)
-	l.audioOutput = make(chan *AudioFrame, AUDIO_FRAME_BUFFER_SIZE)
+// Reset recreates the internal channels using passed parameters.
+func (l *MediaLoader) Reset(videoOutput chan *image.Image, audioOutput chan *AudioFrame) {
+	l.videoOutput = videoOutput
+	l.audioOutput = audioOutput
 	l.selectedAudioStream = -1
 	l.selectedVideoStream = -1
 }

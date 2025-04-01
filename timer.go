@@ -16,10 +16,10 @@ type Timer struct {
 	pctx      *PlayerContext
 }
 
-// Reset recreates the internal channels and sets up the input
-func (t *Timer) Reset(input chan *Image) {
+// Reset sets up the input and output channels using parameters.
+func (t *Timer) Reset(input chan *Image, output chan *Image) {
 	t.input = input
-	t.output = make(chan *Image, TIMER_BUFFER_SIZE)
+	t.output = output
 	t.isPlaying = false
 }
 

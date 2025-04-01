@@ -18,7 +18,7 @@ type VideoPlayer struct {
 	writer *bufio.Writer
 }
 
-// Reset sets up the input channel
+// Reset sets up the input channel using the provided parameter.
 func (v *VideoPlayer) Reset(input chan *Image) {
 	v.input = input
 }

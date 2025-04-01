@@ -15,10 +15,10 @@ type VideoConverter struct {
 	pctx   *PlayerContext
 }
 
-// Reset recreates the output channel and sets up the input
-func (v *VideoConverter) Reset(input chan *image.Image) {
+// Reset sets up the input and output channels using parameters.
+func (v *VideoConverter) Reset(input chan *image.Image, output chan *Image) {
 	v.input = input
-	v.output = make(chan *Image, IMAGE_FRAME_BUFFER_SIZE)
+	v.output = output
 }
 
 func NewVideoConverter(pctx *PlayerContext) *VideoConverter {
